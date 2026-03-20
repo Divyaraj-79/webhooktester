@@ -172,11 +172,18 @@ exports.getStructured = async (req, res) => {
 exports.getEntriesByApiKey = async (req, res) => {
     try {
         const { apiKey } = req.params;
-        const bot = await Bot.findOne({ apiKey, owner: req.user.id });
-        
-        if (!bot) return res.status(404).json({ error: "Bot not found or unauthorized" });
+        const userId = req.user.id;
+        console.log(`🔍 [webhookController] Fetching entries for API Key: ${apiKey}, User: ${userId}`);
 
-        const entries = await ChatData.find({ apiKey, owner: req.user.id }).sort({ updatedAt: -1 });
+        const bot = await Bot.findOne({ apiKey, owner: userId });
+        
+        if (!bot) {
+            console.log(`⚠️ [webhookController] Bot NOT found or NOT owned by user: ${userId}`);
+            return res.status(404).json({ error: "Bot not found or unauthorized" });
+        }
+
+        const entries = await ChatData.find({ apiKey, owner: userId }).sort({ updatedAt: -1 });
+        console.log(`📊 [webhookController] Found ${entries.length} entries for bot: ${apiKey}`);
 
         const dynamicKeys = new Set();
         entries.forEach(entry => {
@@ -235,7 +242,7 @@ exports.getEntriesByApiKey = async (req, res) => {
         });
 
     } catch (err) {
-        console.error(err);
+        console.error("❌ [webhookController] Fetch entries error:", err);
         res.status(500).json({ error: "Failed to fetch entries" });
     }
 };
