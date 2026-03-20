@@ -1,0 +1,92 @@
+const Bot = require('../models/Bot');
+const crypto = require('crypto');
+
+// Upload chatbot JSON
+exports.uploadBot = async (req, res) => {
+    try {
+        console.log("📥 [botController] New Bot Upload started");
+        const botData = req.body;
+        
+        const fieldsMap = new Map();
+
+        // Universal heuristic recursive search
+        function searchForFields(obj, depth = 0) {
+            if (!obj || typeof obj !== 'object' || depth > 20) return;
+
+            if (Array.isArray(obj)) {
+                obj.forEach(item => searchForFields(item, depth + 1));
+                return;
+            }
+
+            const varKeys = ['customField', 'customFieldId', 'variable', 'variableId', 'key', 'fieldName', 'name', 'id'];
+            const labelKeys = ['customFieldSelectedOptionText', 'question', 'text', 'label', 'prompt', 'title', 'placeholder'];
+
+            let foundVar = null;
+            let foundLabel = null;
+
+            for (const k of varKeys) {
+                if (obj[k] && typeof obj[k] === 'string' && obj[k] !== 'Select' && obj[k].length < 100) {
+                    const lowerK = obj[k].toLowerCase();
+                    if (!lowerK.includes('node_') && !lowerK.includes('block_') && !obj[k].match(/^[0-9a-f]{8}-[0-9a-f]{4}/i)) {
+                        foundVar = obj[k];
+                        break;
+                    }
+                }
+            }
+
+            for (const k of labelKeys) {
+                if (obj[k] && typeof obj[k] === 'string' && obj[k] !== 'Select' && obj[k].length < 200) {
+                    foundLabel = obj[k];
+                    break;
+                }
+            }
+
+            if (foundVar) {
+                let finalLabel = foundLabel || foundVar;
+                if (finalLabel.length > 50) {
+                    finalLabel = finalLabel.substring(0, 50) + '...';
+                }
+                
+                fieldsMap.set(foundVar, {
+                    fieldId: foundVar,
+                    fieldName: finalLabel,
+                    questionText: finalLabel
+                });
+            }
+
+            Object.values(obj).forEach(val => searchForFields(val, depth + 1));
+        }
+
+        searchForFields(botData);
+
+        const fields = Array.from(fieldsMap.values());
+        console.log("🔍 [botController] Extracted fields count:", fields.length);
+
+        const apiKey = crypto.randomBytes(16).toString('hex');
+
+        const bot = await Bot.create({
+            apiKey,
+            owner: req.user.id, // Linked to user
+            fields 
+        });
+
+        res.json({
+            message: "Bot uploaded successfully",
+            apiKey,
+            fields: [...new Set(fields.map(f => f.fieldName))]
+        });
+
+    } catch (err) {
+        console.error("❌ [botController] Upload error:", err);
+        res.status(500).json({ error: "Upload failed" });
+    }
+};
+
+exports.getMyBots = async (req, res) => {
+    try {
+        const bots = await Bot.find({ owner: req.user.id });
+        res.json(bots);
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch bots" });
+    }
+};

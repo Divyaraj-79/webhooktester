@@ -1,0 +1,60 @@
+{
+  "id": 22,
+  "data": {
+    "uniqueId": "69bd19e2c0af8",
+    "questionType": "keyboard",
+    "question": "What`s your actual purpose for contacting BizzRiser..?",
+    "multipleChoices": [],
+    "replyType": "Text",
+    "replyTypeSelectedOptionText": "Text",
+    "emailQuickreply": false,
+    "phoneQuickreply": false,
+    "customField": "47624",
+    "customFieldSelectedOptionText": "Travel Company Purpose",
+    "systemField": "",
+    "systemFieldSelectedOptionText": "Please select",
+    "assignToLabels": [],
+    "assignToLabelsSelectedOptionsTextArray": [],
+    "assignToMessengerSequence": null,
+    "assignToMessengerSequenceSelectedOptionText": "",
+    "assignToPhoneSequence": null,
+    "assignToPhoneSequenceSelectedOptionText": "",
+    "skipButtonText": "",
+    "multipleChoiceOptionButtonTitle": "",
+    "googleCalendar": "",
+    "saveGoogleMeetToCustomField": false,
+    "googleMeetCustomField": "",
+    "googleMeetCustomFieldSelectedOptionText": "Please select",
+    "newPostbackId": "69bd19e2c0afa"
+  },
+  "inputs": {
+    "userInputFlowSingleInput": {
+      "connections": [
+        {
+          "node": 21,
+          "output": "userInputFlowOutput",
+          "data": []
+        }
+      ]
+    }
+  },
+  "outputs": {
+    "userInputFlowSingleOutput": {
+      "connections": []
+    },
+    "userInputFlowSingleOutputFinalReply": {
+      "connections": [
+        {
+          "node": 23,
+          "input": "textInput",
+          "data": []
+        }
+      ]
+    }
+  },
+  "position": [
+    2602.9056736080106,
+    -444.03624671267596
+  ],
+  "name": "User Input Flow Single"
+}
