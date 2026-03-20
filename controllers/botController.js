@@ -42,15 +42,19 @@ exports.uploadBot = async (req, res) => {
             }
 
             if (foundVar) {
-                let finalLabel = foundLabel || foundVar;
+                let originalLabel = foundLabel || foundVar;
+                let finalLabel = originalLabel;
                 if (finalLabel.length > 50) {
                     finalLabel = finalLabel.substring(0, 50) + '...';
                 }
                 
+                // Normalize question text
+                const cleanQText = originalLabel.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+
                 fieldsMap.set(foundVar, {
                     fieldId: foundVar,
                     fieldName: finalLabel,
-                    questionText: finalLabel
+                    questionText: cleanQText
                 });
             }
 

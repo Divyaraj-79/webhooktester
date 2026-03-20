@@ -64,7 +64,8 @@ exports.receiveWebhook = async (req, res) => {
         if (Array.isArray(data.user_input_data)) {
             data.user_input_data.forEach(item => {
                 if (item.question && item.answer) {
-                    answersObj[item.question] = String(item.answer);
+                    const cleanQ = String(item.question).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+                    answersObj[cleanQ] = String(item.answer);
                 }
             });
         }
@@ -72,10 +73,11 @@ exports.receiveWebhook = async (req, res) => {
         // Incorporate ALL flattened keys as answers EXCLUDING blacklist/technical
         for (const [key, value] of Object.entries(flatData)) {
             if (value !== null && value !== undefined && value !== '' && !isTechnicalKey(key)) {
-                answersObj[key] = String(value);
+                const cleanKey = String(key).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+                answersObj[cleanKey] = String(value);
             }
         }
-
+// ... [rest of the function maps to answersObj correctly]
         const setQuery = {
             sessionId,
             apiKey,
@@ -214,13 +216,16 @@ exports.getEntriesByApiKey = async (req, res) => {
             };
 
             allFields.forEach(field => {
+                const normFieldQ = field.questionText.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+                
+                // Try direct match first
                 let answer = entry.answers[field.fieldId] || entry.answers[field.fieldId.replace(/\./g, '_DOT_')] || entry.answers[field.questionText];
                 
-                if (!answer && field.questionText) {
-                    const cleanFieldQ = field.questionText.trim().toLowerCase();
+                // Try fuzzy normalized match
+                if (!answer) {
                     const matchedKey = Object.keys(entry.answers).find(k => {
-                        const cleanK = k.replace(/_DOT_/g, '.').trim().toLowerCase();
-                        return cleanK === cleanFieldQ || (cleanFieldQ.length > 5 && (cleanK.includes(cleanFieldQ) || cleanFieldQ.includes(cleanK)));
+                        const cleanK = k.replace(/_DOT_/g, '.').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+                        return cleanK === normFieldQ || (normFieldQ.length > 10 && (cleanK.includes(normFieldQ) || normFieldQ.includes(cleanK)));
                     });
                     if (matchedKey) answer = entry.answers[matchedKey];
                 }
