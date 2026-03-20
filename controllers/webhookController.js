@@ -47,7 +47,8 @@ exports.receiveWebhook = async (req, res) => {
     try {
         const apiKey = req.params.apiKey;
         const data = req.body;
-        console.log("📥 [webhookController] Webhook received for API Key:", apiKey);
+        console.log(`📥 [webhookController] Webhook received for API Key: ${apiKey}`);
+        console.log("📦 RAW PAYLOAD:", JSON.stringify(data, null, 2));
 
         const bot = await Bot.findOne({ apiKey });
         if (!bot) return res.status(404).json({ error: "Bot not found" });
