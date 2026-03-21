@@ -7,105 +7,90 @@ exports.uploadBot = async (req, res) => {
     try {
         console.log("📥 [botController] New Bot Upload started");
         const botData = req.body;
-        
-        const fieldsMap = new Map();
-        const postbacksMap = new Map();
-
-        // extract postbacks
-        function searchForPostbacks(obj, nodeName) {
-            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
-                if (Array.isArray(obj)) {
-                    obj.forEach(item => searchForPostbacks(item, nodeName));
-                }
-                return;
-            }
-            if (obj.postbackId && typeof obj.postbackId === 'string') {
-                postbacksMap.set(obj.postbackId, {
-                    postbackId: obj.postbackId,
-                    buttonText: obj.buttonText || obj.title || obj.text || 'Button Clicked',
-                    sourceNodeName: nodeName || 'Button'
-                });
-            }
-            if (obj.xitFbpostbackId && typeof obj.xitFbpostbackId === 'string') {
-                postbacksMap.set(obj.xitFbpostbackId, {
-                    postbackId: obj.xitFbpostbackId,
-                    buttonText: obj.buttonText || obj.title || obj.text || 'Button Clicked',
-                    sourceNodeName: nodeName || 'Button'
-                });
-            }
-            if (obj.name && obj.data) {
-                // Top level node object
-                searchForPostbacks(obj.data, obj.name);
-            } else {
-                Object.values(obj).forEach(val => searchForPostbacks(val, nodeName));
-            }
+        if (!botData || !botData.nodes) {
+            return res.status(400).json({ error: "Invalid Chatbot JSON: 'nodes' object is missing" });
         }
 
+        const nodeMap = botData.nodes;
+        const fieldsMap = new Map(); // fieldId -> fieldName
+        const postbacksMap = new Map(); // postbackId -> { postbackId, buttonText, sourceNodeName }
 
-        // Universal heuristic recursive search
-        function searchForFields(obj, depth = 0) {
-            if (!obj || typeof obj !== 'object' || depth > 20) return;
-
-            if (Array.isArray(obj)) {
-                obj.forEach(item => searchForFields(item, depth + 1));
-                return;
-            }
-
-            const varKeys = ['customField', 'customFieldId', 'variable', 'variableId', 'key', 'fieldName', 'name', 'id'];
-            const labelKeys = ['customFieldSelectedOptionText', 'question', 'text', 'label', 'prompt', 'title', 'placeholder'];
-
-            let foundVar = null;
-            if (!obj || depth > 20) return;
-            if (obj.customFieldId && obj.customFieldSelectedOptionText && obj.customFieldSelectedOptionText !== 'Select') {
-                fieldsMap.set(obj.customFieldId, obj.customFieldSelectedOptionText);
-            }
-            if (typeof obj === 'object') {
-                Object.values(obj).forEach(val => searchForFields(val, depth + 1));
-            }
-        }
-
-        // Parent Message Finder
+        // --- Optimized Tracing Logic ---
+        const memoParents = new Map();
         function getParentMessage(nodeId, visited = new Set()) {
             if (!nodeId || visited.has(nodeId)) return null;
+            if (memoParents.has(nodeId)) return memoParents.get(nodeId);
+            
             visited.add(nodeId);
-
             const node = nodeMap[nodeId];
             if (!node) return null;
 
             // If this node has a message, return it
             if (node.data && (node.data.textMessage || node.data.headerText)) {
-                return node.data.textMessage || node.data.headerText;
+                const resText = node.data.textMessage || node.data.headerText;
+                memoParents.set(nodeId, resText);
+                return resText;
             }
 
             // Otherwise check inputs
             const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
             for (const conn of inputConnections) {
                 const parentText = getParentMessage(conn.node, visited);
-                if (parentText) return parentText;
+                if (parentText) {
+                    memoParents.set(nodeId, parentText);
+                    return parentText;
+                }
             }
+            memoParents.set(nodeId, null);
             return null;
         }
 
-        function searchForPostbacks(node) {
+        // --- Extraction Pass ---
+        console.log("🔍 [botController] Extracting fields and postbacks from nodes...");
+        
+        Object.values(nodeMap).forEach(node => {
             if (!node || !node.data) return;
 
-            const postbackId = node.data.postbackId || node.data.newPostbackId;
-            const buttonText = node.data.buttonText || node.data.title;
+            // 1. Extract Custom Fields
+            if (node.data.customFieldId && node.data.customFieldSelectedOptionText && node.data.customFieldSelectedOptionText !== 'Select') {
+                const fieldId = node.data.customFieldId;
+                const fieldName = node.data.customFieldSelectedOptionText;
+                // Get breadcrumb question for this field if possible
+                let qText = fieldName;
+                const inputConns = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
+                if (inputConns.length > 0) {
+                    const pText = getParentMessage(inputConns[0].node);
+                    if (pText) qText = pText;
+                }
+
+                fieldsMap.set(fieldId, {
+                    fieldId,
+                    fieldName,
+                    questionText: qText.substring(0, 100).trim()
+                });
+            }
+
+            // 2. Extract Postbacks (Buttons/Rows)
+            const postbackId = (node.data.postbackId || node.data.newPostbackId || node.data.xitFbpostbackId || '').toString().trim();
+            const buttonText = (node.data.buttonText || node.data.title || node.data.text || '').toString().trim();
 
             if (postbackId && buttonText) {
-                // Try to find the question this button belongs to
                 let sourceNodeName = node.name || 'Button';
                 
-                // If it's a generic button/row name, look for parent message
+                // If it's a generic node, try to find the question it answers
                 if (['Inline Button', 'Rows', 'Button'].includes(sourceNodeName)) {
                     const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
                     if (inputConnections.length > 0) {
-                        const parentText = getParentMessage(inputConnections[0].node);
-                        if (parentText) {
-                            // Try to find a meaningful line (like a question)
-                            const lines = parentText.split('\n').map(l => l.trim()).filter(l => l.length > 5);
-                            const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
-                            sourceNodeName = qLine ? qLine.substring(0, 35).trim() : sourceNodeName;
+                        try {
+                            const parentText = getParentMessage(inputConnections[0].node);
+                            if (parentText) {
+                                // Pick a meaningful line from the question
+                                const lines = parentText.split('\n').map(l => l.trim()).filter(l => l.length > 3);
+                                const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
+                                sourceNodeName = qLine ? qLine.substring(0, 35).trim() : sourceNodeName;
+                            }
+                        } catch (e) {
+                            // Avoid crashing on weird graphs
                         }
                     }
                 }
@@ -116,76 +101,52 @@ exports.uploadBot = async (req, res) => {
                     sourceNodeName
                 });
             }
-        }
-
-        console.log("🔍 [botController] Starting field search...");
-        searchForFields(botData);
-        console.log("🔍 [botController] Parsing nodes for postbacks...");
-        
-        Object.values(nodeMap).forEach(node => searchForPostbacks(node));
-        
-        console.log("🔍 [botController] Postback search complete.");
+        });
 
         const fields = Array.from(fieldsMap.values());
         const postbacks = Array.from(postbacksMap.values());
-        console.log("🔍 [botController] Extracted fields count:", fields.length);
-        console.log("🔍 [botController] Extracted postbacks count:", postbacks.length);
+        console.log(`📊 [botController] Extracted ${fields.length} fields and ${postbacks.length} postbacks`);
 
         const apiKey = crypto.randomBytes(16).toString('hex');
-        console.log("🔍 [botController] Creating bot with apiKey:", apiKey);
-
         const bot = await Bot.create({
             apiKey,
-            owner: req.user.id, // Linked to user
+            owner: req.user.id,
             fields,
             postbacks
         });
-        console.log("✅ [botController] Bot created successfully!");
 
+        console.log("✅ [botController] Bot created successfully!");
         res.json({
             message: "Bot uploaded successfully",
-            apiKey,
-            fields: [...new Set(fields.map(f => f.fieldName))]
+            apiKey: bot.apiKey,
+            fieldsCount: fields.length
         });
 
     } catch (err) {
         console.error("❌ [botController] Upload error:", err);
-        res.status(500).json({ error: "Upload failed" });
+        res.status(500).json({ error: err.message || "Failed to process chatbot JSON" });
     }
 };
 
-exports.getMyBots = async (req, res) => {
-    try {
-        const bots = await Bot.find({ owner: req.user.id });
-        res.json(bots);
-    } catch (err) {
-        res.status(500).json({ error: "Failed to fetch bots" });
-    }
-};
-
+// Delete bot and its data
 exports.deleteBot = async (req, res) => {
     try {
         const { apiKey } = req.params;
         const userId = req.user.id;
 
-        // Ensure the bot exists and belongs to the user
         const bot = await Bot.findOne({ apiKey, owner: userId });
-        if (!bot) {
-            return res.status(404).json({ error: "Bot not found or unauthorized" });
-        }
+        if (!bot) return res.status(404).json({ error: "Bot not found" });
 
-        // 1. Delete associated ChatData
-        await ChatData.deleteMany({ apiKey, owner: userId });
+        // Delete all chat data
+        const deleteData = await ChatData.deleteMany({ apiKey, owner: userId });
+        console.log(`🗑️ Deleted ${deleteData.deletedCount} chat entries for bot: ${apiKey}`);
 
-        // 2. Delete the Bot
+        // Delete bot entry
         await Bot.findByIdAndDelete(bot._id);
-
-        console.log(`🗑️ [botController] Bot deleted: ${apiKey} (and associated chat data)`);
         
-        res.json({ message: "Bot and all associated data deleted successfully" });
-
+        res.json({ message: "Bot and associated data deleted successfully" });
     } catch (err) {
-        console.error("❌ [botController] Delete error:", err);
+        console.error(err);
         res.status(500).json({ error: "Failed to delete bot" });
     }
 };
