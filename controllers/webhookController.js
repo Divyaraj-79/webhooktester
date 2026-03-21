@@ -94,9 +94,36 @@ exports.receiveWebhook = async (req, res) => {
             setQuery[`answers.${safeKey}`] = answersObj[key];
         });
 
+        // Smart button detection:
+        // When postbackid is non-empty, it means a button was clicked.
+        // BizzRiser sends user_message = the button label the user clicked in this case.
+        const rawPostbackId = data.postbackid || data.postBackId || '';
+        if (rawPostbackId && flatData['user_message']) {
+            // The user_message at the time of button click IS the button text
+            const buttonClickedText = String(flatData['user_message']).trim();
+            // Look up which button node was clicked by matching buttonText
+            if (bot.postbacks && bot.postbacks.length > 0) {
+                const matchedPb = bot.postbacks.find(p => 
+                    p.buttonText && p.buttonText.trim().toLowerCase() === buttonClickedText.toLowerCase()
+                );
+                if (matchedPb) {
+                    const safeKey = matchedPb.sourceNodeName.replace(/\./g, '_DOT_');
+                    setQuery[`answers.${safeKey}`] = matchedPb.buttonText.trim();
+                } else {
+                    // Store under generic 'button_selected' if no match found
+                    setQuery['answers.button_selected'] = buttonClickedText;
+                }
+            } else {
+                setQuery['answers.button_selected'] = buttonClickedText;
+            }
+        }
+
         await ChatData.findOneAndUpdate(
             { sessionId, apiKey },
-            { $set: setQuery },
+            { 
+                $set: setQuery,
+                $push: { webhookHistory: { payload: data, receivedAt: new Date() } }
+            },
             { upsert: true }
         );
 

@@ -18,6 +18,12 @@ const ChatSchema = new mongoose.Schema({
         type: Object,
         default: {}
     },
+    webhookHistory: [
+        {
+            payload: Object,
+            receivedAt: { type: Date, default: Date.now }
+        }
+    ],
     messages: [
         {
             answer: String,
