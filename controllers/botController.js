@@ -94,12 +94,16 @@ exports.uploadBot = async (req, res) => {
             Object.values(obj).forEach(val => searchForFields(val, depth + 1));
         }
 
+        console.log("🔍 [botController] Starting field search...");
         searchForFields(botData);
+        console.log("🔍 [botController] Field search complete. Starting postback search...");
+        
         if (botData && botData.nodes) {
             Object.values(botData.nodes).forEach(node => searchForPostbacks(node, node.name || 'Button'));
         } else {
             searchForPostbacks(botData, 'Button');
         }
+        console.log("🔍 [botController] Postback search complete.");
 
         const fields = Array.from(fieldsMap.values());
         const postbacks = Array.from(postbacksMap.values());
@@ -107,6 +111,7 @@ exports.uploadBot = async (req, res) => {
         console.log("🔍 [botController] Extracted postbacks count:", postbacks.length);
 
         const apiKey = crypto.randomBytes(16).toString('hex');
+        console.log("🔍 [botController] Creating bot with apiKey:", apiKey);
 
         const bot = await Bot.create({
             apiKey,
@@ -114,6 +119,7 @@ exports.uploadBot = async (req, res) => {
             fields,
             postbacks
         });
+        console.log("✅ [botController] Bot created successfully!");
 
         res.json({
             message: "Bot uploaded successfully",

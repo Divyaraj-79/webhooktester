@@ -94,7 +94,9 @@ function App() {
       setStatus('Success! Webhook generated.');
       setTimeout(() => setStatus(''), 3000);
     } catch (err) {
-      alert('Invalid JSON or Upload Failed');
+      console.error("Upload Error:", err);
+      const msg = err.response?.data?.error || err.message || 'Upload Failed';
+      alert(`Upload Failed: ${msg}`);
     } finally {
       setLoading(false);
     }
