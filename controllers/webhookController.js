@@ -42,7 +42,7 @@ exports.receiveWebhook = async (req, res) => {
         if (!bot) return res.status(404).json({ error: "Bot not found" });
 
         // ── Identify the user ────────────────────────────────────────────────
-        const phone    = (data.phone || data.wa_id || data.whatsapp_bot_username || '').toString().trim();
+        const phone    = (data.phone || data.wa_id || data.chat_id || data.whatsapp_bot_username || '').toString().trim();
         const name     = (data.first_name || data.name || data.contact_name || '').toString().trim();
         const chatId   = (data.chat_id || '').toString().trim();
         const sessionId = chatId || phone || ('anon-' + Date.now());
