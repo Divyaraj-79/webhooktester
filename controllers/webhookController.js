@@ -12,19 +12,16 @@ function isTechnicalKey(key) {
     const cleanK = key.replace(/_DOT_/g, '.');
     if (BLACKLIST.includes(cleanK.toLowerCase())) return true;
     if (cleanK.startsWith('.')) return true;
-    // Node IDs or long hex/UUIDs
     if (cleanK.match(/^node_/i) || cleanK.match(/^block_/i)) return true;
-    if (cleanK.match(/^[0-9a-f]{24}$/i)) return true; // MongoDB ID
-    if (cleanK.match(/^[0-9a-f]{8}-[0-9a-f]{4}/i)) return true; // UUID
+    if (cleanK.match(/^[0-9a-f]{24}$/i)) return true;
+    if (cleanK.match(/^[0-9a-f]{8}-[0-9a-f]{4}/i)) return true;
     return false;
 }
 
-// Helper to deeply flatten objects
 function flattenObject(ob) {
     var toReturn = {};
     for (var i in ob) {
         if (!ob.hasOwnProperty(i)) continue;
-
         if (ob[i] !== null && typeof ob[i] === 'object' && !Array.isArray(ob[i])) {
             var flatObject = flattenObject(ob[i]);
             for (var x in flatObject) {
@@ -32,7 +29,6 @@ function flattenObject(ob) {
                 toReturn[i + '.' + x] = flatObject[x];
             }
         } else if (Array.isArray(ob[i])) {
-            // Only stringify if it's not the user_input_data which we handle separately
             if (i !== 'user_input_data' && i !== 'messages') {
                 toReturn[i] = JSON.stringify(ob[i]);
             }
@@ -55,12 +51,11 @@ exports.receiveWebhook = async (req, res) => {
 
         const flatData = flattenObject(data);
 
-        // Heuristics for Session ID, Name, Phone
         let sessionId = flatData['chat_id'] || flatData['sessionId'] || flatData['id'] || flatData['conversationId'] || flatData['chat.id'] || "anon-" + Date.now();
         let name = flatData['first_name'] || flatData['name'] || flatData['userName'] || flatData['firstName'] || flatData['user.firstName'] || flatData['user.name'] || flatData['contact.name'] || '';
         let phone = flatData['whatsapp_bot_username'] || flatData['phone'] || flatData['phone_number'] || flatData['from'] || flatData['user.phone'] || flatData['contact.phone'] || flatData['wa_id'] || '';
 
-        // Extract BizzRiser specific array if present
+        // Extract user_input_data Q&A pairs
         let answersObj = {};
         if (Array.isArray(data.user_input_data)) {
             data.user_input_data.forEach(item => {
@@ -71,50 +66,81 @@ exports.receiveWebhook = async (req, res) => {
             });
         }
 
-        // Incorporate ALL flattened keys as answers EXCLUDING blacklist/technical
+        // Incorporate all non-technical flattened keys
         for (const [key, value] of Object.entries(flatData)) {
             if (value !== null && value !== undefined && value !== '' && !isTechnicalKey(key)) {
                 const cleanKey = String(key).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
                 answersObj[cleanKey] = String(value);
             }
         }
-// ... [rest of the function maps to answersObj correctly]
+
         const setQuery = {
             sessionId,
             apiKey,
-            owner: bot.owner, // Inherit from bot
+            owner: bot.owner,
             rawWebhookPayload: data
         };
         if (name) setQuery.name = name;
         if (phone) setQuery.phone = phone;
 
-        // Merge new answers
         Object.keys(answersObj).forEach(key => {
             const safeKey = key.replace(/\./g, '_DOT_');
             setQuery[`answers.${safeKey}`] = answersObj[key];
         });
 
-        // Smart button detection:
-        // When postbackid is non-empty, it means a button was clicked.
-        // BizzRiser sends user_message = the button label the user clicked in this case.
-        const rawPostbackId = data.postbackid || data.postBackId || '';
-        if (rawPostbackId && flatData['user_message']) {
-            // The user_message at the time of button click IS the button text
-            const buttonClickedText = String(flatData['user_message']).trim();
-            // Look up which button node was clicked by matching buttonText
-            if (bot.postbacks && bot.postbacks.length > 0) {
-                const matchedPb = bot.postbacks.find(p => 
-                    p.buttonText && p.buttonText.trim().toLowerCase() === buttonClickedText.toLowerCase()
-                );
-                if (matchedPb) {
-                    const safeKey = matchedPb.sourceNodeName.replace(/\./g, '_DOT_');
-                    setQuery[`answers.${safeKey}`] = matchedPb.buttonText.trim();
+        // ─── BUTTON CLICK DETECTION ───────────────────────────────────────────
+        // BizzRiser sends a non-empty postbackid when a button is clicked,
+        // but NEVER includes the button text in the payload.
+        // 
+        // Detection: A button-click call has:
+        //   - postbackid: non-empty string
+        //   - user_input_data: empty array []
+        //   - user_message: NOT present (or empty)
+        //
+        // Strategy: build a learned postbackId→buttonText map (learnedPostbacks) on
+        // the Bot document. Each NEW runtime postbackId seen for this bot gets
+        // sequentially assigned to the next un-mapped Inline Button option from
+        // bot.postbacks. Once learned, it applies to ALL future sessions.
+        // ─────────────────────────────────────────────────────────────────────
+        const rawPostbackId = (data.postbackid || data.postBackId || '').trim();
+
+        const isButtonClickCall = rawPostbackId.length > 0 && 
+                                  Array.isArray(data.user_input_data) && 
+                                  data.user_input_data.length === 0 &&
+                                  !data.user_message;
+
+        if (isButtonClickCall) {
+            const learnedPostbacks = bot.learnedPostbacks || [];
+            let knownMapping = learnedPostbacks.find(p => p.runtimePostbackId === rawPostbackId);
+
+            if (!knownMapping) {
+                // Get all Inline Button options from the exported JSON
+                const inlineButtonOptions = (bot.postbacks || []).filter(p => p.sourceNodeName === 'Inline Button');
+                // How many have already been learned?
+                const alreadyMappedCount = learnedPostbacks.filter(p => p.sourceNodeName === 'Inline Button').length;
+
+                if (alreadyMappedCount < inlineButtonOptions.length) {
+                    const nextButton = inlineButtonOptions[alreadyMappedCount];
+                    knownMapping = {
+                        runtimePostbackId: rawPostbackId,
+                        buttonText: nextButton.buttonText,
+                        sourceNodeName: nextButton.sourceNodeName
+                    };
+                    // Persist this learned mapping to the Bot document permanently
+                    await Bot.findByIdAndUpdate(bot._id, {
+                        $push: { learnedPostbacks: knownMapping }
+                    });
+                    console.log(`🧠 [learnedPostbacks] New mapping: "${rawPostbackId}" → "${knownMapping.buttonText}"`);
                 } else {
-                    // Store under generic 'button_selected' if no match found
-                    setQuery['answers.button_selected'] = buttonClickedText;
+                    console.log(`⚠️ [learnedPostbacks] Unknown postbackId "${rawPostbackId}", all buttons already mapped`);
                 }
             } else {
-                setQuery['answers.button_selected'] = buttonClickedText;
+                console.log(`✅ [learnedPostbacks] Known mapping: "${rawPostbackId}" → "${knownMapping.buttonText}"`);
+            }
+
+            if (knownMapping) {
+                const safeKey = knownMapping.sourceNodeName.replace(/\./g, '_DOT_');
+                setQuery[`answers.${safeKey}`] = knownMapping.buttonText.trim();
             }
         }
 
@@ -139,13 +165,11 @@ exports.receiveWebhook = async (req, res) => {
 exports.getStructured = async (req, res) => {
     try {
         const apiKey = req.params.apiKey;
-        // Restricting by owner
         const bot = await Bot.findOne({ apiKey, owner: req.user.id });
         const chats = await ChatData.find({ apiKey, owner: req.user.id });
 
         if (!bot) return res.status(404).json({ error: "Bot not found or unauthorized" });
-// ... [rest of getStructured remains logic-identical but queries now include owner]
-// I will rewrite fully for the tool
+
         const dynamicKeys = new Set();
         chats.forEach(chat => {
             Object.keys(chat.answers || {}).forEach(k => {
@@ -165,16 +189,16 @@ exports.getStructured = async (req, res) => {
         });
 
         const formatted = chats.map(chat => {
-            // Map postback IDs to button texts using bot.postbacks
-            if (bot.postbacks && bot.postbacks.length > 0) {
-                 Object.values(chat.answers || {}).forEach(val => {
-                     if (typeof val === 'string') {
-                         const matchedPb = bot.postbacks.find(p => p.postbackId === val);
-                         if (matchedPb) {
-                             chat.answers[matchedPb.sourceNodeName] = matchedPb.buttonText;
-                         }
-                     }
-                 });
+            // Map learned postbacks
+            if (bot.learnedPostbacks && bot.learnedPostbacks.length > 0) {
+                Object.entries(chat.answers || {}).forEach(([k, val]) => {
+                    if (typeof val === 'string') {
+                        const matchedPb = bot.learnedPostbacks.find(p => p.runtimePostbackId === val);
+                        if (matchedPb) {
+                            chat.answers[matchedPb.sourceNodeName] = matchedPb.buttonText;
+                        }
+                    }
+                });
             }
 
             const row = {
@@ -249,16 +273,16 @@ exports.getEntriesByApiKey = async (req, res) => {
         });
 
         const formatted = entries.map(entry => {
-            // Map postback IDs to button texts using bot.postbacks
-            if (bot.postbacks && bot.postbacks.length > 0) {
-                 Object.values(entry.answers || {}).forEach(val => {
-                     if (typeof val === 'string') {
-                         const matchedPb = bot.postbacks.find(p => p.postbackId === val);
-                         if (matchedPb) {
-                             entry.answers[matchedPb.sourceNodeName] = matchedPb.buttonText;
-                         }
-                     }
-                 });
+            // Resolve learned postback IDs to button text in answers
+            if (bot.learnedPostbacks && bot.learnedPostbacks.length > 0) {
+                Object.entries(entry.answers || {}).forEach(([k, val]) => {
+                    if (typeof val === 'string') {
+                        const matchedPb = bot.learnedPostbacks.find(p => p.runtimePostbackId === val);
+                        if (matchedPb) {
+                            entry.answers[matchedPb.sourceNodeName] = matchedPb.buttonText;
+                        }
+                    }
+                });
             }
 
             const row = {
@@ -271,10 +295,8 @@ exports.getEntriesByApiKey = async (req, res) => {
             allFields.forEach(field => {
                 const normFieldQ = field.questionText.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
                 
-                // Try direct match first
                 let answer = entry.answers[field.fieldId] || entry.answers[field.fieldId.replace(/\./g, '_DOT_')] || entry.answers[field.questionText];
                 
-                // Try fuzzy normalized match
                 if (!answer) {
                     const matchedKey = Object.keys(entry.answers).find(k => {
                         const cleanK = k.replace(/_DOT_/g, '.').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -304,4 +326,3 @@ exports.getEntriesByApiKey = async (req, res) => {
         res.status(500).json({ error: "Failed to fetch entries" });
     }
 };
-
