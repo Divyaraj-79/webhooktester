@@ -54,12 +54,21 @@ exports.uploadBot = async (req, res) => {
             const node = nodeMap[nodeId];
             if (!node) return null;
             if (node.data && (node.data.textMessage || node.data.headerText)) {
-                const raw = node.data.textMessage || node.data.headerText;
-                const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 3);
-                const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
-                const result = qLine ? qLine.substring(0, 50).trim() : null;
-                memoNextQ.set(nodeId, result);
-                return result;
+                // Determine if this node waits for user input. If it doesn't, we skip it to find the REAL next question.
+                const nodeName = (node.name || '').toLowerCase();
+                const isInteractive = ['interactive', 'button', 'reply', 'row', 'list'].some(t => nodeName.includes(t));
+                
+                const outputConns = node.outputs ? Object.values(node.outputs).flatMap(o => o.connections || []) : [];
+
+                // If it's NOT interactive, AND it has outputs, keep tracing forward!
+                if (!(!isInteractive && outputConns.length > 0)) {
+                    const raw = node.data.textMessage || node.data.headerText;
+                    const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 3);
+                    const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
+                    const result = qLine ? qLine.substring(0, 50).trim() : null;
+                    memoNextQ.set(nodeId, result);
+                    return result;
+                }
             }
             const outputConns = node.outputs ? Object.values(node.outputs).flatMap(o => o.connections || []) : [];
             for (const conn of outputConns) {
