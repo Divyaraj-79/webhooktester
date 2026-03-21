@@ -41,16 +41,13 @@ exports.receiveWebhook = async (req, res) => {
         const bot = await Bot.findOne({ apiKey });
         if (!bot) return res.status(404).json({ error: "Bot not found" });
 
-        // ── Identify the user ────────────────────────────────────────────────
         const phone    = (data.phone || data.wa_id || data.chat_id || data.whatsapp_bot_username || '').toString().trim();
         const name     = (data.first_name || data.name || data.contact_name || '').toString().trim();
-        const chatId   = (data.chat_id || '').toString().trim();
-        const sessionId = chatId || phone || ('anon-' + Date.now());
+        const sessionId = (data.chat_id || phone || ('anon-' + Date.now())).toString().trim();
 
         const answersToSave = {};
         if (phone) answersToSave['WhatsApp Number'] = phone;
 
-        // ── Q&A from user_input_data ───────────────────────────────────────────
         if (Array.isArray(data.user_input_data)) {
             data.user_input_data.forEach(item => {
                 if (item.question && item.answer !== undefined) {
@@ -60,141 +57,128 @@ exports.receiveWebhook = async (req, res) => {
             });
         }
 
+        const rawPostbackId = (data.postbackid || data.postBackId || '').toString().trim();
         const userMessage = (data.user_message || '').toString().trim();
         const isTriggerKeyword = /^(hi|hello|start|hey|hii|helo|नमस्ते)$/i.test(userMessage);
-        
-        const rawPostbackId = (data.postbackid || data.postBackId || '').toString().trim();
-        const questionOrder = getQuestionOrder(bot.postbacks);
 
-        // Fetch session
         let sessionDoc = await ChatData.findOne({ sessionId, apiKey });
         if (!sessionDoc) {
             sessionDoc = new ChatData({ sessionId, apiKey, owner: bot.owner, phone, name });
         }
-        
-        const currentStep = sessionDoc.currentStep || 0;
-        let nextStep = currentStep;
 
-        // ── BUTTON CLICK - Retroactive Resolution ────────────────────────────
-        // Because BizzRiser sends only a short postbackid, we don't know the button text.
-        // We track the flow via sequence:
-        // 1. When button is clicked at Step N, we save the answer as "[Postback: ID]"
-        //    under Question N.
-        // 2. We keep this pending. Next time user interacts, we are at Step N+1.
-        // 3. We check bot.postbacks for Question N: which button's `nextQuestion` matches Step N+1?
-        //    That MUST be the button they pressed!
-        // ─────────────────────────────────────────────────────────────────────
+        if (isTriggerKeyword) {
+            sessionDoc.lastQuestion = '';
+            sessionDoc.pendingRuntimePostbackId = '';
+            sessionDoc.currentStep = 0;
+            console.log(`✨ Trigger keyword detected for ${sessionId}`);
+        }
 
+        const allPostbacks = bot.postbacks || [];
+        const questionOrder = getQuestionOrder(allPostbacks);
+        const rootQuestion = questionOrder[0] || '';
+        let currentQuestion = sessionDoc.lastQuestion || rootQuestion;
         if (rawPostbackId) {
-            // First check if we've learned this ID already across sessions
-            const learned = (bot.learnedPostbacks || []).find(lp => lp.runtimePostbackId === rawPostbackId);
-            
-            if (learned) {
-                // Known button!
-                answersToSave[learned.sourceNodeName] = learned.buttonText;
-                console.log(`✅ Learned: "${rawPostbackId}" → [${learned.sourceNodeName}] "${learned.buttonText}"`);
+            // A. Retroactively resolve PREVIOUS button if pending
+            if (sessionDoc.pendingRuntimePostbackId && sessionDoc.lastQuestion) {
+                const prevQ = sessionDoc.lastQuestion;
+                const prevId = sessionDoc.pendingRuntimePostbackId;
+                const branches = allPostbacks.filter(p => p.sourceNodeName === prevQ);
                 
-                // Update session state
-                sessionDoc.lastQuestion = learned.sourceNodeName;
-                sessionDoc.pendingRuntimePostbackId = ''; // resolved!
+                let matchedBtn;
+                // 1. Resolve using common global memory
+                const learnedCurrent = (bot.learnedPostbacks || []).find(lp => lp.runtimePostbackId === rawPostbackId);
+                // 2. Resolve using CURRENT button text if BizzRiser sent it
+                if (learnedCurrent) {
+                    const targetQ = learnedCurrent.sourceNodeName;
+                    matchedBtn = branches.find(p => p.nextQuestion && (
+                        p.nextQuestion.trim().toLowerCase() === targetQ.trim().toLowerCase() ||
+                        targetQ.trim().toLowerCase().startsWith(p.nextQuestion.trim().toLowerCase())
+                    ));
+                }
                 
-                // Advance step by finding where this fits in the flow
-                const qIdx = questionOrder.indexOf(learned.sourceNodeName);
-                if (qIdx !== -1) nextStep = qIdx + 1;
-                
-            } else if (questionOrder.length > 0 && currentStep < questionOrder.length) {
-                // Unknown button ID: Process sequentially
-                const questionName = questionOrder[currentStep];
-                
-                // If there's a PENDING postback from the PREVIOUS step, we can resolve it now!
-                // Because we've now arrived at `questionName`, we can see which button from
-                // `sessionDoc.lastQuestion` leads to `questionName`.
-                if (sessionDoc.pendingRuntimePostbackId && sessionDoc.lastQuestion) {
-                    const prevQ = sessionDoc.lastQuestion;
-                    const prevPostbackId = sessionDoc.pendingRuntimePostbackId;
-                    
-                    // Find button under prevQ whose nextQuestion matches current questionName
-                    const candidates = (bot.postbacks || []).filter(p => p.sourceNodeName === prevQ);
-                    const matchedBtn = candidates.find(p => {
-                        if (!p.nextQuestion) return false;
-                        const nq = p.nextQuestion.trim().toLowerCase();
-                        const qn = questionName.trim().toLowerCase();
-                        return nq.startsWith(qn) || qn.startsWith(nq) || nq === qn;
-                    });
-                    
-                    if (matchedBtn) {
-                        answersToSave[prevQ] = matchedBtn.buttonText;
-                        console.log(`🔄 Retroactively resolved prev button: "${prevPostbackId}" = "${matchedBtn.buttonText}"`);
-                        
-                        // Save to learnedPostbacks globally for future
-                        await Bot.updateOne(
-                            { apiKey },
-                            { $push: { learnedPostbacks: {
-                                runtimePostbackId: prevPostbackId,
-                                buttonText: matchedBtn.buttonText,
-                                sourceNodeName: prevQ
-                            }}}
-                        );
+                // Fallback to first branch if still unknown
+                if (!matchedBtn) matchedBtn = branches.find(p => p.nextQuestion);
+
+                if (matchedBtn) {
+                    answersToSave[prevQ] = matchedBtn.buttonText;
+                    console.log(`🔄 Resolved prev "${prevId}" → "${matchedBtn.buttonText}"`);
+                    if (!(bot.learnedPostbacks || []).some(lp => lp.runtimePostbackId === prevId)) {
+                        await Bot.updateOne({ apiKey }, { $push: { learnedPostbacks: {
+                            runtimePostbackId: prevId,
+                            buttonText: matchedBtn.buttonText,
+                            sourceNodeName: prevQ
+                        }}});
                     }
+                    currentQuestion = matchedBtn.nextQuestion;
                 }
-                
-                // Store placeholder for the CURRENT button press
-                answersToSave[questionName] = `[Postback: ${rawPostbackId}]`;
-                console.log(`📌 Step ${currentStep}: postback "${rawPostbackId}" → question "${questionName}"`);
-                
-                // Update session state for the next webhook to resolve
-                sessionDoc.lastQuestion = questionName;
-                sessionDoc.pendingRuntimePostbackId = rawPostbackId;
-                nextStep = currentStep + 1;
             }
-        } else if (userMessage) {
-            if (!isTriggerKeyword) {
-                // Plain text message
-                if (questionOrder.length > 0 && currentStep < questionOrder.length) {
-                    const questionName = questionOrder[currentStep];
-                    answersToSave[questionName] = userMessage;
-                    sessionDoc.lastQuestion = questionName;
-                    nextStep = currentStep + 1;
-                } else {
-                    answersToSave['User Message'] = userMessage;
+
+            // B. Process CURRENT button
+            let learned = (bot.learnedPostbacks || []).find(lp => lp.runtimePostbackId === rawPostbackId);
+            
+            // NEW: If not learned globally, but we HAVE the button text in userMessage, use it!
+            if (!learned && userMessage && currentQuestion) {
+                const candidates = allPostbacks.filter(p => p.sourceNodeName === currentQuestion);
+                const matchByText = candidates.find(p => 
+                    p.buttonText.trim().toLowerCase() === userMessage.trim().toLowerCase() ||
+                    userMessage.trim().toLowerCase().includes(p.buttonText.trim().toLowerCase())
+                );
+                
+                if (matchByText) {
+                    learned = {
+                        runtimePostbackId: rawPostbackId,
+                        buttonText: matchByText.buttonText,
+                        sourceNodeName: currentQuestion
+                    };
+                    // Save this new learning globally immediately!
+                    await Bot.updateOne({ apiKey }, { $push: { learnedPostbacks: learned } });
+                    console.log(`💡 Learned NEW ID via userMessage: "${rawPostbackId}" → "${matchByText.buttonText}"`);
                 }
+            }
+
+            if (learned) {
+                answersToSave[learned.sourceNodeName] = learned.buttonText;
+                const botButton = allPostbacks.find(p => p.sourceNodeName === learned.sourceNodeName && p.buttonText === learned.buttonText);
+                sessionDoc.lastQuestion = (botButton && botButton.nextQuestion) ? botButton.nextQuestion : learned.sourceNodeName;
+                sessionDoc.pendingRuntimePostbackId = ''; 
             } else {
-                // Trigger keyword resets the flow
-                nextStep = 0;
-                sessionDoc.lastQuestion = '';
-                sessionDoc.pendingRuntimePostbackId = '';
+                if (currentQuestion) {
+                    answersToSave[currentQuestion] = `[Postback: ${rawPostbackId}]`;
+                    sessionDoc.lastQuestion = currentQuestion;
+                    sessionDoc.pendingRuntimePostbackId = rawPostbackId;
+                }
+            }
+        } else if (userMessage && !isTriggerKeyword) {
+            if (currentQuestion) {
+                answersToSave[currentQuestion] = userMessage;
+                const branches = allPostbacks.filter(p => p.sourceNodeName === currentQuestion);
+                if (branches[0] && branches[0].nextQuestion) sessionDoc.lastQuestion = branches[0].nextQuestion;
+            } else {
+                answersToSave['User Message'] = userMessage;
             }
         }
 
-        // ── Persist to DB ─────────────────────────────────────────────────────
-        sessionDoc.currentStep = nextStep;
+        // C. Final Persistence
+        const finalIdx = getQuestionOrder(allPostbacks).indexOf(sessionDoc.lastQuestion);
+        sessionDoc.currentStep = finalIdx !== -1 ? finalIdx + 1 : 0;
         if (name) sessionDoc.name = name;
         if (phone) sessionDoc.phone = phone;
 
-        // Apply answers
         const currentAnswers = sessionDoc.answers || {};
         Object.keys(answersToSave).forEach(k => {
-            const safeKey = k.replace(/\./g, '_DOT_');
-            currentAnswers[safeKey] = answersToSave[k];
+            currentAnswers[k.replace(/\./g, '_DOT_')] = answersToSave[k];
         });
         sessionDoc.answers = currentAnswers;
-        
         sessionDoc.webhookHistory.push({ payload: data, receivedAt: new Date() });
 
-        // Save session
         await sessionDoc.save();
-
-        // One final cleanup: If we retroactively resolved the answer up above, the ChatData might
-        // still have the old "[Postback: xxx]" in answers in MongoDB because of Mongoose mix-types.
-        // We ensure a direct update query for safe overwriting.
         const setQuery = {};
         Object.keys(answersToSave).forEach(k => {
-            const safeKey = k.replace(/\./g, '_DOT_');
-            setQuery[`answers.${safeKey}`] = answersToSave[k];
+            setQuery[`answers.${k.replace(/\./g, '_DOT_')}`] = answersToSave[k];
         });
         await ChatData.updateOne({ _id: sessionDoc._id }, { $set: setQuery });
 
-        console.log(`💾 Saved session ${sessionId}. Answer keys: ${JSON.stringify(Object.keys(answersToSave))}`);
+        console.log(`💾 Saved session ${sessionId}`);
         res.sendStatus(200);
 
     } catch (err) {
@@ -229,13 +213,11 @@ exports.getEntriesByApiKey = async (req, res) => {
         const allFields = [];
         if (dynamicKeys.has('WhatsApp Number')) allFields.push('WhatsApp Number');
         
-        // Force ALL bot questions to appear as columns, even if no user has answered them yet
         const questionOrder = getQuestionOrder(bot.postbacks);
         questionOrder.forEach(q => {
             if (!allFields.includes(q)) allFields.push(q);
         });
         
-        // Any extra discovered keys that aren't bot questions
         dynamicKeys.forEach(k => { if (!allFields.includes(k)) allFields.push(k); });
 
         const formatted = entries.map(entry => {
