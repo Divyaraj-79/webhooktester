@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const BotSchema = new mongoose.Schema({
     apiKey: String,
+    name: { type: String, default: 'My Bot' },
     owner: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',

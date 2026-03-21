@@ -29,7 +29,8 @@ const ChatSchema = new mongoose.Schema({
             answer: String,
             timestamp: Date
         }
-    ]
+    ],
+    currentStep: { type: Number, default: 0 }   // tracks position in bot question sequence
 }, { timestamps: true });
 
 module.exports = mongoose.model('ChatData', ChatSchema);

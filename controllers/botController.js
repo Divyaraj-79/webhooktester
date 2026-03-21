@@ -74,24 +74,23 @@ exports.uploadBot = async (req, res) => {
             const postbackId = (node.data.postbackId || node.data.newPostbackId || node.data.xitFbpostbackId || '').toString().trim();
             const buttonText = (node.data.buttonText || node.data.title || node.data.text || '').toString().trim();
 
-            if (postbackId && buttonText) {
+            // Only extract postbacks from interactive elements (not trigger nodes)
+            const BUTTON_NODE_TYPES = ['Inline Button', 'Rows', 'Button', 'Quick Reply'];
+            if (postbackId && buttonText && BUTTON_NODE_TYPES.includes(node.name)) {
                 let sourceNodeName = node.name || 'Button';
                 
-                // If it's a generic node, try to find the question it answers
-                if (['Inline Button', 'Rows', 'Button'].includes(sourceNodeName)) {
-                    const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
-                    if (inputConnections.length > 0) {
-                        try {
-                            const parentText = getParentMessage(inputConnections[0].node);
-                            if (parentText) {
-                                // Pick a meaningful line from the question
-                                const lines = parentText.split('\n').map(l => l.trim()).filter(l => l.length > 3);
-                                const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
-                                sourceNodeName = qLine ? qLine.substring(0, 35).trim() : sourceNodeName;
-                            }
-                        } catch (e) {
-                            // Avoid crashing on weird graphs
+                // Find the question this button answers by tracing back to parent
+                const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
+                if (inputConnections.length > 0) {
+                    try {
+                        const parentText = getParentMessage(inputConnections[0].node);
+                        if (parentText) {
+                            const lines = parentText.split('\n').map(l => l.trim()).filter(l => l.length > 3);
+                            const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
+                            sourceNodeName = qLine ? qLine.substring(0, 40).trim() : sourceNodeName;
                         }
+                    } catch (e) {
+                        // Avoid crashing on weird graphs
                     }
                 }
 
@@ -108,18 +107,26 @@ exports.uploadBot = async (req, res) => {
         console.log(`📊 [botController] Extracted ${fields.length} fields and ${postbacks.length} postbacks`);
 
         const apiKey = crypto.randomBytes(16).toString('hex');
+        
+        // Extract a human-readable bot name from the JSON
+        const startNode = Object.values(botJSON.nodes || {}).find(n => n.name === 'Start Bot Flow');
+        const botName = startNode?.data?.title || 'My Bot';
+        
         const bot = await Bot.create({
             apiKey,
+            name: botName,
             owner: req.user.id,
             fields,
             postbacks
         });
 
-        console.log("✅ [botController] Bot created successfully!");
+        console.log(`✅ [botController] Bot "${botName}" created with ${postbacks.length} postbacks!`);
         res.json({
             message: "Bot uploaded successfully",
             apiKey: bot.apiKey,
-            fieldsCount: fields.length
+            botName,
+            fieldsCount: fields.length,
+            postbacksCount: postbacks.length
         });
 
     } catch (err) {
