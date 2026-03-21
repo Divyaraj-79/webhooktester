@@ -128,6 +128,18 @@ exports.uploadBot = async (req, res) => {
     }
 };
 
+// Fetch all bots for current user
+exports.getMyBots = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const bots = await Bot.find({ owner: userId }).sort({ createdAt: -1 });
+        res.json(bots);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to fetch bots" });
+    }
+};
+
 // Delete bot and its data
 exports.deleteBot = async (req, res) => {
     try {
