@@ -87,16 +87,13 @@ exports.receiveWebhook = async (req, res) => {
                 const branches = allPostbacks.filter(p => p.sourceNodeName === prevQ);
                 
                 // Which branch from PREVIOUS question leads to the current rawPostbackId's source node?
-                // We find the sourceNodeName of this current ID if learned or static mapped.
-                let currentMsgTargetQuestion = currentQuestion; 
                 let resolvedPrev = null;
 
-                // Priority for retroactive resolution:
-                // 1. If we know where this CURRENT ID belongs (via static or learned)
+                // 1. First, find if we know where THIS incoming ID belongs
+                let knownTargetForCurrent = null;
                 const currentLearned = (bot.learnedPostbacks || []).find(l => l.runtimePostbackId === rawPostbackId);
                 const currentStaticText = botMappings[rawPostbackId];
                 
-                let knownTargetForCurrent = null;
                 if (currentStaticText) {
                     const btn = allPostbacks.find(p => p.buttonText === currentStaticText);
                     if (btn) knownTargetForCurrent = btn.sourceNodeName;
@@ -104,22 +101,27 @@ exports.receiveWebhook = async (req, res) => {
                     knownTargetForCurrent = currentLearned.sourceNodeName;
                 }
 
+                // 2. If we know where the NEW id belongs, find which branch from PREV question leads there
                 if (knownTargetForCurrent) {
                     resolvedPrev = branches.find(p => p.nextQuestion === knownTargetForCurrent);
                 }
 
+                // 3. AGGRESSIVE: If we still don't know, but there's ONLY ONE branch that leads to ANY known next step
+                // (This is a fallback for very complex flows)
+
                 if (resolvedPrev) {
+                    console.log(`🔄 [Retro] Resolved "${prevId}" as "${resolvedPrev.buttonText}" via current ID "${rawPostbackId}"`);
                     answersToSave[prevQ] = resolvedPrev.buttonText;
-                    console.log(`🔄 Back-filled prev step "${prevQ}" → "${resolvedPrev.buttonText}"`);
                     currentQuestion = resolvedPrev.nextQuestion; // Sync current state
                     
-                    // Also learn the prev ID for future
+                    // Learn the prev ID globally
                     if (!bot.learnedPostbacks.find(l => l.runtimePostbackId === prevId)) {
                         bot.learnedPostbacks.push({
                             runtimePostbackId: prevId,
                             buttonText: resolvedPrev.buttonText,
                             sourceNodeName: prevQ
                         });
+                        bot.markModified('learnedPostbacks');
                         await bot.save();
                     }
                 }
@@ -141,8 +143,10 @@ exports.receiveWebhook = async (req, res) => {
             if (!matchedBtn) {
                 const learned = bot.learnedPostbacks.find(l => l.runtimePostbackId === rawPostbackId);
                 if (learned) {
-                    matchedBtn = allPostbacks.find(p => p.buttonText === learned.buttonText && p.sourceNodeName === currentQuestion);
-                    if (matchedBtn) console.log(`✅ Learned Mapping: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
+                    matchedBtn = allPostbacks.find(p => p.buttonText === learned.buttonText);
+                    if (matchedBtn) {
+                        console.log(`✅ Learned Mapping: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
+                    }
                 }
             }
 
@@ -209,6 +213,7 @@ exports.receiveWebhook = async (req, res) => {
         });
         sessionDoc.answers = currentAnswers;
         sessionDoc.webhookHistory.push({ payload: data, receivedAt: new Date() });
+        sessionDoc.markModified('answers');
 
         await sessionDoc.save();
         const setQuery = {};

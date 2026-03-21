@@ -14,7 +14,7 @@ async function check() {
 
     const bots = await Bot.find();
     console.log("Bots count:", bots.length);
-    bots.forEach(b => console.log(`- Bot: ${b.apiKey.slice(0, 8)} | Owner: ${b.owner}`));
+    bots.forEach(b => console.log(`- Bot: ${b.apiKey.slice(0, 8)} | Name: ${b.name} | Owner: ${b.owner}`));
 
     const entries = await ChatData.find({}).limit(20).sort({ updatedAt: -1 });
     console.log(`ChatEntries count: ${entries.length}`);

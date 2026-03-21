@@ -4,7 +4,9 @@
 
 const botMappings = {
   // Chatbot For filter data (New JSON Map)
+  "SNSiHmc-YTzqNNE": "Chatbot For filter data", // From user screenshot - represents start interaction
   "69be7b6caa82b": "Chatbot For filter data",
+  "8rrr_dq0qPzTwlZ": "कारीगर / ऑपरेटर", // From user screenshot - represents artisan branch
   "69be7b6caa868": "कारीगर / ऑपरेटर",
   "69be7b6caa878": "हेल्पर / मजदुर",
   "69be7b6caa891": "कांट्रेक्टर/ ठेकेदार",
