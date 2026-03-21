@@ -14,6 +14,10 @@ const ChatSchema = new mongoose.Schema({
         type: Object,
         default: {}
     },
+    rawWebhookPayload: {
+        type: Object,
+        default: {}
+    },
     messages: [
         {
             answer: String,

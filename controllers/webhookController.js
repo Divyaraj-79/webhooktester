@@ -83,6 +83,7 @@ exports.receiveWebhook = async (req, res) => {
             sessionId,
             apiKey,
             owner: bot.owner, // Inherit from bot
+            rawWebhookPayload: data
         };
         if (name) setQuery.name = name;
         if (phone) setQuery.phone = phone;
