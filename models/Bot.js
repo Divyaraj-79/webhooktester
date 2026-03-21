@@ -13,6 +13,13 @@ const BotSchema = new mongoose.Schema({
             fieldName: String,
             questionText: String
         }
+    ],
+    postbacks: [
+        {
+            postbackId: String,
+            buttonText: String,
+            sourceNodeName: String
+        }
     ]
 });
 

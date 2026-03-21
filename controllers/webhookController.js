@@ -137,6 +137,18 @@ exports.getStructured = async (req, res) => {
         });
 
         const formatted = chats.map(chat => {
+            // Map postback IDs to button texts using bot.postbacks
+            if (bot.postbacks && bot.postbacks.length > 0) {
+                 Object.values(chat.answers || {}).forEach(val => {
+                     if (typeof val === 'string') {
+                         const matchedPb = bot.postbacks.find(p => p.postbackId === val);
+                         if (matchedPb) {
+                             chat.answers[matchedPb.sourceNodeName] = matchedPb.buttonText;
+                         }
+                     }
+                 });
+            }
+
             const row = {
                 phone: chat.phone || "N/A",
                 name: chat.name || "N/A",
@@ -209,6 +221,18 @@ exports.getEntriesByApiKey = async (req, res) => {
         });
 
         const formatted = entries.map(entry => {
+            // Map postback IDs to button texts using bot.postbacks
+            if (bot.postbacks && bot.postbacks.length > 0) {
+                 Object.values(entry.answers || {}).forEach(val => {
+                     if (typeof val === 'string') {
+                         const matchedPb = bot.postbacks.find(p => p.postbackId === val);
+                         if (matchedPb) {
+                             entry.answers[matchedPb.sourceNodeName] = matchedPb.buttonText;
+                         }
+                     }
+                 });
+            }
+
             const row = {
                 id: entry._id,
                 name: entry.name || "N/A",

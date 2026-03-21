@@ -8,6 +8,38 @@ exports.uploadBot = async (req, res) => {
         const botData = req.body;
         
         const fieldsMap = new Map();
+        const postbacksMap = new Map();
+
+        // extract postbacks
+        function searchForPostbacks(obj, nodeName) {
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+                if (Array.isArray(obj)) {
+                    obj.forEach(item => searchForPostbacks(item, nodeName));
+                }
+                return;
+            }
+            if (obj.postbackId && typeof obj.postbackId === 'string') {
+                postbacksMap.set(obj.postbackId, {
+                    postbackId: obj.postbackId,
+                    buttonText: obj.buttonText || obj.title || obj.text || 'Button Clicked',
+                    sourceNodeName: nodeName || 'Button'
+                });
+            }
+            if (obj.xitFbpostbackId && typeof obj.xitFbpostbackId === 'string') {
+                postbacksMap.set(obj.xitFbpostbackId, {
+                    postbackId: obj.xitFbpostbackId,
+                    buttonText: obj.buttonText || obj.title || obj.text || 'Button Clicked',
+                    sourceNodeName: nodeName || 'Button'
+                });
+            }
+            if (obj.name && obj.data) {
+                // Top level node object
+                searchForPostbacks(obj.data, obj.name);
+            } else {
+                Object.values(obj).forEach(val => searchForPostbacks(val, nodeName));
+            }
+        }
+
 
         // Universal heuristic recursive search
         function searchForFields(obj, depth = 0) {
@@ -62,16 +94,24 @@ exports.uploadBot = async (req, res) => {
         }
 
         searchForFields(botData);
+        if (botData && botData.nodes) {
+            Object.values(botData.nodes).forEach(node => searchForPostbacks(node, node.name || 'Button'));
+        } else {
+            searchForPostbacks(botData, 'Button');
+        }
 
         const fields = Array.from(fieldsMap.values());
+        const postbacks = Array.from(postbacksMap.values());
         console.log("🔍 [botController] Extracted fields count:", fields.length);
+        console.log("🔍 [botController] Extracted postbacks count:", postbacks.length);
 
         const apiKey = crypto.randomBytes(16).toString('hex');
 
         const bot = await Bot.create({
             apiKey,
             owner: req.user.id, // Linked to user
-            fields 
+            fields,
+            postbacks
         });
 
         res.json({
