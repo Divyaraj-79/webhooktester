@@ -45,6 +45,31 @@ exports.uploadBot = async (req, res) => {
             return null;
         }
 
+        // Trace FORWARD from a button output to find the NEXT question text
+        const memoNextQ = new Map();
+        function getNextQuestion(nodeId, visited = new Set()) {
+            if (!nodeId || visited.has(nodeId)) return null;
+            if (memoNextQ.has(nodeId)) return memoNextQ.get(nodeId);
+            visited.add(nodeId);
+            const node = nodeMap[nodeId];
+            if (!node) return null;
+            if (node.data && (node.data.textMessage || node.data.headerText)) {
+                const raw = node.data.textMessage || node.data.headerText;
+                const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 3);
+                const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
+                const result = qLine ? qLine.substring(0, 50).trim() : null;
+                memoNextQ.set(nodeId, result);
+                return result;
+            }
+            const outputConns = node.outputs ? Object.values(node.outputs).flatMap(o => o.connections || []) : [];
+            for (const conn of outputConns) {
+                const found = getNextQuestion(conn.node, visited);
+                if (found) { memoNextQ.set(nodeId, found); return found; }
+            }
+            memoNextQ.set(nodeId, null);
+            return null;
+        }
+
         // --- Extraction Pass ---
         console.log("🔍 [botController] Extracting fields and postbacks from nodes...");
         
@@ -94,10 +119,20 @@ exports.uploadBot = async (req, res) => {
                     }
                 }
 
+                // Trace FORWARD to find which question comes AFTER clicking this button
+                let nextQuestion = null;
+                const outputConns = node.outputs
+                    ? Object.values(node.outputs).flatMap(o => o.connections || [])
+                    : [];
+                if (outputConns.length > 0) {
+                    nextQuestion = getNextQuestion(outputConns[0].node);
+                }
+
                 postbacksMap.set(postbackId, {
                     postbackId,
                     buttonText,
-                    sourceNodeName
+                    sourceNodeName,
+                    nextQuestion: nextQuestion || null
                 });
             }
         });

@@ -30,7 +30,9 @@ const ChatSchema = new mongoose.Schema({
             timestamp: Date
         }
     ],
-    currentStep: { type: Number, default: 0 }   // tracks position in bot question sequence
+    currentStep: { type: Number, default: 0 },  // tracks position in bot question sequence
+    lastQuestion: { type: String, default: '' },  // last question that was answered (for retroactive resolution)
+    pendingRuntimePostbackId: { type: String, default: '' } // runtime ID of last unresolved button click
 }, { timestamps: true });
 
 module.exports = mongoose.model('ChatData', ChatSchema);

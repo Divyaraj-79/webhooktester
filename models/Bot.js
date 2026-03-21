@@ -19,7 +19,8 @@ const BotSchema = new mongoose.Schema({
         {
             postbackId: String,
             buttonText: String,
-            sourceNodeName: String
+            sourceNodeName: String,
+            nextQuestion: String   // which question comes AFTER clicking this button
         }
     ],
     // Runtime postbackId mappings learned from live webhook calls

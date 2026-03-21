@@ -37,8 +37,7 @@ exports.receiveWebhook = async (req, res) => {
         const apiKey = req.params.apiKey;
         const data = req.body;
         console.log(`📥 Webhook for API Key: ${apiKey}`);
-        console.log("📦 RAW:", JSON.stringify(data));
-
+        
         const bot = await Bot.findOne({ apiKey });
         if (!bot) return res.status(404).json({ error: "Bot not found" });
 
@@ -49,129 +48,156 @@ exports.receiveWebhook = async (req, res) => {
         const sessionId = chatId || phone || ('anon-' + Date.now());
 
         const answersToSave = {};
-
-        // Always store phone as WhatsApp Number column
         if (phone) answersToSave['WhatsApp Number'] = phone;
 
         // ── Q&A from user_input_data ───────────────────────────────────────────
         if (Array.isArray(data.user_input_data)) {
             data.user_input_data.forEach(item => {
-                if (item.question && item.answer !== undefined && item.answer !== null) {
+                if (item.question && item.answer !== undefined) {
                     const cleanQ = String(item.question).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
                     answersToSave[cleanQ] = String(item.answer);
                 }
             });
         }
 
-        // ── Text messages from user ────────────────────────────────────────────
         const userMessage = (data.user_message || '').toString().trim();
-        // Store text messages only if they're not trigger keywords
         const isTriggerKeyword = /^(hi|hello|start|hey|hii|helo|नमस्ते)$/i.test(userMessage);
-
-        // ── BUTTON CLICK DETECTION ────────────────────────────────────────────
-        //
-        // BizzRiser button clicks send:
-        //   - postbackid: a short runtime ID (e.g. "sdiugGyR7gLaX8V")
-        //   - NO user_message (or empty user_message)
-        //
-        // We cannot know button text from the payload alone.
-        // We use sequence position to know WHICH QUESTION it answers.
-        //
-        // For each session, currentStep tracks how many button questions are answered.
-        // Each time a button postback comes in, we:
-        //   1. Check if this runtime postbackid is already in learnedPostbacks → use stored text
-        //   2. Otherwise, look up questionOrder[currentStep] → that's the answering question
-        //   3. Store the answer as "PostbackID: <id>" since we don't know which button was pressed
-        //   4. Increment currentStep for this session
-        // ─────────────────────────────────────────────────────────────────────
         
         const rawPostbackId = (data.postbackid || data.postBackId || '').toString().trim();
         const questionOrder = getQuestionOrder(bot.postbacks);
 
+        // Fetch session
+        let sessionDoc = await ChatData.findOne({ sessionId, apiKey });
+        if (!sessionDoc) {
+            sessionDoc = new ChatData({ sessionId, apiKey, owner: bot.owner, phone, name });
+        }
+        
+        const currentStep = sessionDoc.currentStep || 0;
+        let nextStep = currentStep;
+
+        // ── BUTTON CLICK - Retroactive Resolution ────────────────────────────
+        // Because BizzRiser sends only a short postbackid, we don't know the button text.
+        // We track the flow via sequence:
+        // 1. When button is clicked at Step N, we save the answer as "[Postback: ID]"
+        //    under Question N.
+        // 2. We keep this pending. Next time user interacts, we are at Step N+1.
+        // 3. We check bot.postbacks for Question N: which button's `nextQuestion` matches Step N+1?
+        //    That MUST be the button they pressed!
+        // ─────────────────────────────────────────────────────────────────────
+
         if (rawPostbackId) {
-            // Step 1: Check learnedPostbacks (exact postbackid → button mapping)
+            // First check if we've learned this ID already across sessions
             const learned = (bot.learnedPostbacks || []).find(lp => lp.runtimePostbackId === rawPostbackId);
             
             if (learned) {
-                // Known! Use stored answer
+                // Known button!
                 answersToSave[learned.sourceNodeName] = learned.buttonText;
                 console.log(`✅ Learned: "${rawPostbackId}" → [${learned.sourceNodeName}] "${learned.buttonText}"`);
-            } else if (questionOrder.length > 0) {
-                // Step 2: Get session's current step
-                const sessionDoc = await ChatData.findOne({ sessionId, apiKey }, { currentStep: 1 });
-                const step = sessionDoc?.currentStep || 0;
                 
-                if (step < questionOrder.length) {
-                    const questionName = questionOrder[step];
-                    // We know the question but not which specific button — store postbackid as placeholder
-                    // This will be replaced if we learn the actual text later
-                    answersToSave[questionName] = `[Postback: ${rawPostbackId}]`;
-                    console.log(`📌 Step ${step}: postback "${rawPostbackId}" → question "${questionName}"`);
+                // Update session state
+                sessionDoc.lastQuestion = learned.sourceNodeName;
+                sessionDoc.pendingRuntimePostbackId = ''; // resolved!
+                
+                // Advance step by finding where this fits in the flow
+                const qIdx = questionOrder.indexOf(learned.sourceNodeName);
+                if (qIdx !== -1) nextStep = qIdx + 1;
+                
+            } else if (questionOrder.length > 0 && currentStep < questionOrder.length) {
+                // Unknown button ID: Process sequentially
+                const questionName = questionOrder[currentStep];
+                
+                // If there's a PENDING postback from the PREVIOUS step, we can resolve it now!
+                // Because we've now arrived at `questionName`, we can see which button from
+                // `sessionDoc.lastQuestion` leads to `questionName`.
+                if (sessionDoc.pendingRuntimePostbackId && sessionDoc.lastQuestion) {
+                    const prevQ = sessionDoc.lastQuestion;
+                    const prevPostbackId = sessionDoc.pendingRuntimePostbackId;
                     
-                    // Save to learnedPostbacks so we can associate if button text comes later
-                    await Bot.updateOne(
-                        { apiKey },
-                        { $push: { learnedPostbacks: {
-                            runtimePostbackId: rawPostbackId,
-                            buttonText: `[Postback: ${rawPostbackId}]`,
-                            sourceNodeName: questionName
-                        }}}
-                    );
+                    // Find button under prevQ whose nextQuestion matches current questionName
+                    const candidates = (bot.postbacks || []).filter(p => p.sourceNodeName === prevQ);
+                    const matchedBtn = candidates.find(p => p.nextQuestion === questionName);
                     
-                    // Increment step for this session
-                    await ChatData.findOneAndUpdate(
-                        { sessionId, apiKey },
-                        { $inc: { currentStep: 1 } },
-                        { upsert: true }
-                    );
-                } else {
-                    console.log(`⚠️ Button press beyond question flow at step ${step}`);
+                    if (matchedBtn) {
+                        answersToSave[prevQ] = matchedBtn.buttonText;
+                        console.log(`🔄 Retroactively resolved prev button: "${prevPostbackId}" = "${matchedBtn.buttonText}"`);
+                        
+                        // Save to learnedPostbacks globally for future
+                        await Bot.updateOne(
+                            { apiKey },
+                            { $push: { learnedPostbacks: {
+                                runtimePostbackId: prevPostbackId,
+                                buttonText: matchedBtn.buttonText,
+                                sourceNodeName: prevQ
+                            }}}
+                        );
+                    }
                 }
-            } else {
-                console.log(`⚠️ Bot has 0 postbacks — re-upload the bot JSON first!`);
-            }
-        } else if (userMessage && !isTriggerKeyword) {
-            // Plain text answer (not a button)
-            // Try to map to current question in flow
-            if (questionOrder.length > 0) {
-                const sessionDoc = await ChatData.findOne({ sessionId, apiKey }, { currentStep: 1 });
-                const step = sessionDoc?.currentStep || 0;
                 
-                if (step < questionOrder.length) {
-                    const questionName = questionOrder[step];
+                // Store placeholder for the CURRENT button press
+                answersToSave[questionName] = `[Postback: ${rawPostbackId}]`;
+                console.log(`📌 Step ${currentStep}: postback "${rawPostbackId}" → question "${questionName}"`);
+                
+                // Update session state for the next webhook to resolve
+                sessionDoc.lastQuestion = questionName;
+                sessionDoc.pendingRuntimePostbackId = rawPostbackId;
+                nextStep = currentStep + 1;
+                
+                // In case this is the LAST question and won't be resolved by a future step, save placeholder
+                await Bot.updateOne(
+                    { apiKey },
+                    { $push: { learnedPostbacks: {
+                        runtimePostbackId: rawPostbackId,
+                        buttonText: `[Postback: ${rawPostbackId}]`,
+                        sourceNodeName: questionName
+                    }}}
+                );
+            }
+        } else if (userMessage) {
+            if (!isTriggerKeyword) {
+                // Plain text message
+                if (questionOrder.length > 0 && currentStep < questionOrder.length) {
+                    const questionName = questionOrder[currentStep];
                     answersToSave[questionName] = userMessage;
-                    console.log(`📝 Text: "${userMessage}" → question "${questionName}"`);
-                    await ChatData.findOneAndUpdate(
-                        { sessionId, apiKey },
-                        { $inc: { currentStep: 1 } },
-                        { upsert: true }
-                    );
+                    sessionDoc.lastQuestion = questionName;
+                    nextStep = currentStep + 1;
                 } else {
                     answersToSave['User Message'] = userMessage;
                 }
             } else {
-                answersToSave['User Message'] = userMessage;
+                // Trigger keyword resets the flow
+                nextStep = 0;
+                sessionDoc.lastQuestion = '';
+                sessionDoc.pendingRuntimePostbackId = '';
             }
         }
 
         // ── Persist to DB ─────────────────────────────────────────────────────
-        const setQuery = { sessionId, apiKey, owner: bot.owner };
-        if (name)  setQuery.name  = name;
-        if (phone) setQuery.phone = phone;
+        sessionDoc.currentStep = nextStep;
+        if (name) sessionDoc.name = name;
+        if (phone) sessionDoc.phone = phone;
 
-        Object.keys(answersToSave).forEach(key => {
-            const safeKey = key.replace(/\./g, '_DOT_');
-            setQuery[`answers.${safeKey}`] = answersToSave[key];
+        // Apply answers
+        const currentAnswers = sessionDoc.answers || {};
+        Object.keys(answersToSave).forEach(k => {
+            const safeKey = k.replace(/\./g, '_DOT_');
+            currentAnswers[safeKey] = answersToSave[k];
         });
+        sessionDoc.answers = currentAnswers;
+        
+        sessionDoc.webhookHistory.push({ payload: data, receivedAt: new Date() });
 
-        await ChatData.findOneAndUpdate(
-            { sessionId, apiKey },
-            {
-                $set: setQuery,
-                $push: { webhookHistory: { payload: data, receivedAt: new Date() } }
-            },
-            { upsert: true }
-        );
+        // Save session
+        await sessionDoc.save();
+
+        // One final cleanup: If we retroactively resolved the answer up above, the ChatData might
+        // still have the old "[Postback: xxx]" in answers in MongoDB because of Mongoose mix-types.
+        // We ensure a direct update query for safe overwriting.
+        const setQuery = {};
+        Object.keys(answersToSave).forEach(k => {
+            const safeKey = k.replace(/\./g, '_DOT_');
+            setQuery[`answers.${safeKey}`] = answersToSave[k];
+        });
+        await ChatData.updateOne({ _id: sessionDoc._id }, { $set: setQuery });
 
         console.log(`💾 Saved session ${sessionId}. Answer keys: ${JSON.stringify(Object.keys(answersToSave))}`);
         res.sendStatus(200);
@@ -240,7 +266,6 @@ exports.getEntriesByApiKey = async (req, res) => {
     }
 };
 
-// ── Structured Fetch ───────────────────────────────────────────────────────────
 exports.getStructured = async (req, res) => {
     try {
         const apiKey = req.params.apiKey;
