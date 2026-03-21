@@ -55,54 +55,75 @@ exports.uploadBot = async (req, res) => {
             const labelKeys = ['customFieldSelectedOptionText', 'question', 'text', 'label', 'prompt', 'title', 'placeholder'];
 
             let foundVar = null;
-            let foundLabel = null;
+            if (!obj || depth > 20) return;
+            if (obj.customFieldId && obj.customFieldSelectedOptionText && obj.customFieldSelectedOptionText !== 'Select') {
+                fieldsMap.set(obj.customFieldId, obj.customFieldSelectedOptionText);
+            }
+            if (typeof obj === 'object') {
+                Object.values(obj).forEach(val => searchForFields(val, depth + 1));
+            }
+        }
 
-            for (const k of varKeys) {
-                if (obj[k] && typeof obj[k] === 'string' && obj[k] !== 'Select' && obj[k].length < 100) {
-                    const lowerK = obj[k].toLowerCase();
-                    if (!lowerK.includes('node_') && !lowerK.includes('block_') && !obj[k].match(/^[0-9a-f]{8}-[0-9a-f]{4}/i)) {
-                        foundVar = obj[k];
-                        break;
+        // Parent Message Finder
+        function getParentMessage(nodeId, visited = new Set()) {
+            if (!nodeId || visited.has(nodeId)) return null;
+            visited.add(nodeId);
+
+            const node = nodeMap[nodeId];
+            if (!node) return null;
+
+            // If this node has a message, return it
+            if (node.data && (node.data.textMessage || node.data.headerText)) {
+                return node.data.textMessage || node.data.headerText;
+            }
+
+            // Otherwise check inputs
+            const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
+            for (const conn of inputConnections) {
+                const parentText = getParentMessage(conn.node, visited);
+                if (parentText) return parentText;
+            }
+            return null;
+        }
+
+        function searchForPostbacks(node) {
+            if (!node || !node.data) return;
+
+            const postbackId = node.data.postbackId || node.data.newPostbackId;
+            const buttonText = node.data.buttonText || node.data.title;
+
+            if (postbackId && buttonText) {
+                // Try to find the question this button belongs to
+                let sourceNodeName = node.name || 'Button';
+                
+                // If it's a generic button/row name, look for parent message
+                if (['Inline Button', 'Rows', 'Button'].includes(sourceNodeName)) {
+                    const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
+                    if (inputConnections.length > 0) {
+                        const parentText = getParentMessage(inputConnections[0].node);
+                        if (parentText) {
+                            // Try to find a meaningful line (like a question)
+                            const lines = parentText.split('\n').map(l => l.trim()).filter(l => l.length > 5);
+                            const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
+                            sourceNodeName = qLine ? qLine.substring(0, 35).trim() : sourceNodeName;
+                        }
                     }
                 }
-            }
 
-            for (const k of labelKeys) {
-                if (obj[k] && typeof obj[k] === 'string' && obj[k] !== 'Select' && obj[k].length < 200) {
-                    foundLabel = obj[k];
-                    break;
-                }
-            }
-
-            if (foundVar) {
-                let originalLabel = foundLabel || foundVar;
-                let finalLabel = originalLabel;
-                if (finalLabel.length > 50) {
-                    finalLabel = finalLabel.substring(0, 50) + '...';
-                }
-                
-                // Normalize question text
-                const cleanQText = originalLabel.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-
-                fieldsMap.set(foundVar, {
-                    fieldId: foundVar,
-                    fieldName: finalLabel,
-                    questionText: cleanQText
+                postbacksMap.set(postbackId, {
+                    postbackId,
+                    buttonText,
+                    sourceNodeName
                 });
             }
-
-            Object.values(obj).forEach(val => searchForFields(val, depth + 1));
         }
 
         console.log("🔍 [botController] Starting field search...");
         searchForFields(botData);
-        console.log("🔍 [botController] Field search complete. Starting postback search...");
+        console.log("🔍 [botController] Parsing nodes for postbacks...");
         
-        if (botData && botData.nodes) {
-            Object.values(botData.nodes).forEach(node => searchForPostbacks(node, node.name || 'Button'));
-        } else {
-            searchForPostbacks(botData, 'Button');
-        }
+        Object.values(nodeMap).forEach(node => searchForPostbacks(node));
+        
         console.log("🔍 [botController] Postback search complete.");
 
         const fields = Array.from(fieldsMap.values());

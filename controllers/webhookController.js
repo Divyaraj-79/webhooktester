@@ -51,12 +51,19 @@ exports.receiveWebhook = async (req, res) => {
 
         const flatData = flattenObject(data);
 
-        let sessionId = flatData['chat_id'] || flatData['sessionId'] || flatData['id'] || flatData['conversationId'] || flatData['chat.id'] || "anon-" + Date.now();
-        let name = flatData['first_name'] || flatData['name'] || flatData['userName'] || flatData['firstName'] || flatData['user.firstName'] || flatData['user.name'] || flatData['contact.name'] || '';
-        let phone = flatData['whatsapp_bot_username'] || flatData['phone'] || flatData['phone_number'] || flatData['from'] || flatData['user.phone'] || flatData['contact.phone'] || flatData['wa_id'] || '';
+        // New logic for sessionId, phone, and name
+        const sessionId = data.phone || data.wa_id || data.contact_id || flatData['chat_id'] || flatData['sessionId'] || flatData['id'] || flatData['conversationId'] || flatData['chat.id'] || "anon-" + Date.now();
+        const phone = data.phone || data.wa_id || flatData['whatsapp_bot_username'] || flatData['phone'] || flatData['phone_number'] || flatData['from'] || flatData['user.phone'] || flatData['contact.phone'] || '';
+        const name = data.name || data.contact_name || data.sender_name || flatData['first_name'] || flatData['name'] || flatData['userName'] || flatData['firstName'] || flatData['user.firstName'] || flatData['user.name'] || flatData['contact.name'] || '';
 
         // Extract user_input_data Q&A pairs
         let answersObj = {};
+        
+        // Explicitly include WhatsApp Number in the record data for visibility
+        if (phone) {
+            answersObj['WhatsApp Number'] = phone;
+        }
+
         if (Array.isArray(data.user_input_data)) {
             data.user_input_data.forEach(item => {
                 if (item.question && item.answer) {
@@ -114,28 +121,31 @@ exports.receiveWebhook = async (req, res) => {
             let knownMapping = learnedPostbacks.find(p => p.runtimePostbackId === rawPostbackId);
 
             if (!knownMapping) {
-                // Get all Inline Button options from the exported JSON
-                const inlineButtonOptions = (bot.postbacks || []).filter(p => p.sourceNodeName === 'Inline Button');
-                // How many have already been learned?
-                const alreadyMappedCount = learnedPostbacks.filter(p => p.sourceNodeName === 'Inline Button').length;
+                // Get all postback options from the bot definition
+                const allBotPostbacks = bot.postbacks || [];
+                // Find all that haven't been mapped to a runtime ID yet
+                const mappedRuntimeIds = new Set(learnedPostbacks.map(p => p.runtimePostbackId));
+                const mappedBotPostbackIds = new Set(learnedPostbacks.map(p => p.postbackId));
+                
+                const unmappedPostback = allBotPostbacks.find(p => !mappedBotPostbackIds.has(p.postbackId));
 
-                if (alreadyMappedCount < inlineButtonOptions.length) {
-                    const nextButton = inlineButtonOptions[alreadyMappedCount];
+                if (unmappedPostback) {
                     knownMapping = {
                         runtimePostbackId: rawPostbackId,
-                        buttonText: nextButton.buttonText,
-                        sourceNodeName: nextButton.sourceNodeName
+                        buttonText: unmappedPostback.buttonText,
+                        sourceNodeName: unmappedPostback.sourceNodeName,
+                        postbackId: unmappedPostback.postbackId // Track which bot postback this maps to
                     };
-                    // Persist this learned mapping to the Bot document permanently
+                    // Persist this learned mapping
                     await Bot.findByIdAndUpdate(bot._id, {
                         $push: { learnedPostbacks: knownMapping }
                     });
-                    console.log(`🧠 [learnedPostbacks] New mapping: "${rawPostbackId}" → "${knownMapping.buttonText}"`);
+                    console.log(`🧠 [learnedPostbacks] Learned: "${rawPostbackId}" → "${knownMapping.buttonText}" (Column: ${knownMapping.sourceNodeName})`);
                 } else {
-                    console.log(`⚠️ [learnedPostbacks] Unknown postbackId "${rawPostbackId}", all buttons already mapped`);
+                    console.log(`⚠️ [learnedPostbacks] No unmapped postbacks left for postbackId "${rawPostbackId}"`);
                 }
             } else {
-                console.log(`✅ [learnedPostbacks] Known mapping: "${rawPostbackId}" → "${knownMapping.buttonText}"`);
+                console.log(`✅ [learnedPostbacks] Known: "${rawPostbackId}" → "${knownMapping.buttonText}"`);
             }
 
             if (knownMapping) {
