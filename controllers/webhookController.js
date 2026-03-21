@@ -238,8 +238,14 @@ exports.getEntriesByApiKey = async (req, res) => {
         // Ordered fields: WhatsApp Number → question order → rest
         const allFields = [];
         if (dynamicKeys.has('WhatsApp Number')) allFields.push('WhatsApp Number');
+        
+        // Force ALL bot questions to appear as columns, even if no user has answered them yet
         const questionOrder = getQuestionOrder(bot.postbacks);
-        questionOrder.forEach(q => { if (dynamicKeys.has(q) && !allFields.includes(q)) allFields.push(q); });
+        questionOrder.forEach(q => {
+            if (!allFields.includes(q)) allFields.push(q);
+        });
+        
+        // Any extra discovered keys that aren't bot questions
         dynamicKeys.forEach(k => { if (!allFields.includes(k)) allFields.push(k); });
 
         const formatted = entries.map(entry => {
