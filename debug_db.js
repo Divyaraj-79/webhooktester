@@ -16,9 +16,13 @@ async function check() {
     console.log("Bots count:", bots.length);
     bots.forEach(b => console.log(`- Bot: ${b.apiKey.slice(0, 8)} | Owner: ${b.owner}`));
 
-    const entries = await ChatData.find();
-    console.log("ChatEntries count:", entries.length);
-    entries.forEach(e => console.log(`- Entry: ${e.sessionId.slice(0, 8)} | Bot: ${e.apiKey.slice(0, 8)} | Owner: ${e.owner}`));
+    const entries = await ChatData.find({}).limit(20).sort({ updatedAt: -1 });
+    console.log(`ChatEntries count: ${entries.length}`);
+    entries.forEach(e => {
+        const sid = e.sessionId ? e.sessionId.slice(0, 8) : 'N/A';
+        const akey = e.apiKey ? e.apiKey.slice(0, 8) : 'N/A';
+        console.log(`- Entry: ${sid} | Bot: ${akey} | Owner: ${e.owner}`);
+    });
 
     process.exit();
 }

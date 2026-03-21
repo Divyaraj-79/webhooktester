@@ -213,3 +213,30 @@ exports.deleteBot = async (req, res) => {
         res.status(500).json({ error: "Failed to delete bot" });
     }
 };
+
+// Get or Create a Universal Bot for the user
+exports.getUniversalBot = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        // Find existing bot or create a new one
+        let bot = await Bot.findOne({ owner: userId });
+        
+        if (!bot) {
+            console.log(`🆕 Creating first Universal Bot for user: ${userId}`);
+            const apiKey = crypto.randomBytes(16).toString('hex');
+            bot = await Bot.create({
+                apiKey,
+                name: "Universal Bot",
+                owner: userId,
+                fields: [],
+                postbacks: []
+            });
+        }
+        
+        res.json(bot);
+    } catch (err) {
+        console.error("❌ [getUniversalBot] Error:", err);
+        res.status(500).json({ error: "Failed to initialize Universal Bot" });
+    }
+};
