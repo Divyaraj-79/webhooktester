@@ -109,7 +109,7 @@ exports.uploadBot = async (req, res) => {
         const apiKey = crypto.randomBytes(16).toString('hex');
         
         // Extract a human-readable bot name from the JSON
-        const startNode = Object.values(botJSON.nodes || {}).find(n => n.name === 'Start Bot Flow');
+        const startNode = Object.values(botData.nodes || {}).find(n => n.name === 'Start Bot Flow');
         const botName = startNode?.data?.title || 'My Bot';
         
         const bot = await Bot.create({
