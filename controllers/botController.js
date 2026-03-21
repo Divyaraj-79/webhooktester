@@ -1,4 +1,5 @@
 const Bot = require('../models/Bot');
+const ChatData = require('../models/ChatData');
 const crypto = require('crypto');
 
 // Upload chatbot JSON
@@ -132,5 +133,32 @@ exports.getMyBots = async (req, res) => {
         res.json(bots);
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch bots" });
+    }
+};
+
+exports.deleteBot = async (req, res) => {
+    try {
+        const { apiKey } = req.params;
+        const userId = req.user.id;
+
+        // Ensure the bot exists and belongs to the user
+        const bot = await Bot.findOne({ apiKey, owner: userId });
+        if (!bot) {
+            return res.status(404).json({ error: "Bot not found or unauthorized" });
+        }
+
+        // 1. Delete associated ChatData
+        await ChatData.deleteMany({ apiKey, owner: userId });
+
+        // 2. Delete the Bot
+        await Bot.findByIdAndDelete(bot._id);
+
+        console.log(`🗑️ [botController] Bot deleted: ${apiKey} (and associated chat data)`);
+        
+        res.json({ message: "Bot and all associated data deleted successfully" });
+
+    } catch (err) {
+        console.error("❌ [botController] Delete error:", err);
+        res.status(500).json({ error: "Failed to delete bot" });
     }
 };

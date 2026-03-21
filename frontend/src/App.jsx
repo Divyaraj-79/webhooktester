@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
   Upload, LayoutDashboard, Copy, Download, Zap, Database, 
-  CheckCircle2, LogIn, UserPlus, LogOut, ShieldCheck, Mail, Lock, PlusCircle
+  CheckCircle2, LogIn, UserPlus, LogOut, ShieldCheck, Mail, Lock, PlusCircle, Trash2
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
@@ -140,6 +140,36 @@ function App() {
     setTimeout(() => setStatus(''), 2000);
   };
 
+  const handleDeleteBot = async (apiKeyToDelete) => {
+    if (!window.confirm('Are you sure you want to delete this bot and all its data? This cannot be undone.')) return;
+    
+    try {
+      setLoading(true);
+      await axios.delete(`${API_BASE}/bot/${apiKeyToDelete}`, authHeader);
+      
+      // Update bots list
+      setMyBots(prev => prev.filter(b => b.apiKey !== apiKeyToDelete));
+      
+      // If we deleted the active bot, reset it
+      if (apiKey === apiKeyToDelete) {
+        const remainingBots = myBots.filter(b => b.apiKey !== apiKeyToDelete);
+        if (remainingBots.length > 0) {
+          setApiKey(remainingBots[0].apiKey);
+        } else {
+          setApiKey('');
+          setEntries([]);
+        }
+      }
+      
+      setStatus('Bot deleted successfully');
+      setTimeout(() => setStatus(''), 3000);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to delete bot');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!user) {
     return (
       <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '80vh' }}>
@@ -212,11 +242,37 @@ function App() {
                     cursor: 'pointer', 
                     background: apiKey === bot.apiKey ? 'rgba(0, 255, 136, 0.1)' : 'rgba(255, 255, 255, 0.03)',
                     border: `1px solid ${apiKey === bot.apiKey ? 'var(--primary)' : 'transparent'}`,
-                    transition: 'all 0.2s'
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
                   }}
                 >
-                  <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>Bot: {bot.apiKey.slice(0, 8)}...</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{bot.fields.length} columns defined</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>Bot: {bot.apiKey.slice(0, 8)}...</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{bot.fields.length} columns defined</div>
+                  </div>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteBot(bot.apiKey);
+                    }}
+                    style={{ 
+                      background: 'none', 
+                      border: 'none', 
+                      color: 'rgba(255, 255, 255, 0.3)', 
+                      cursor: 'pointer',
+                      padding: '4px',
+                      borderRadius: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.color = '#ff4d4d'}
+                    onMouseOut={(e) => e.currentTarget.style.color = 'rgba(255, 255, 255, 0.3)'}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               ))}
               <button 
