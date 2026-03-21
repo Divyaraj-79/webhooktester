@@ -115,7 +115,12 @@ exports.receiveWebhook = async (req, res) => {
                     
                     // Find button under prevQ whose nextQuestion matches current questionName
                     const candidates = (bot.postbacks || []).filter(p => p.sourceNodeName === prevQ);
-                    const matchedBtn = candidates.find(p => p.nextQuestion === questionName);
+                    const matchedBtn = candidates.find(p => {
+                        if (!p.nextQuestion) return false;
+                        const nq = p.nextQuestion.trim().toLowerCase();
+                        const qn = questionName.trim().toLowerCase();
+                        return nq.startsWith(qn) || qn.startsWith(nq) || nq === qn;
+                    });
                     
                     if (matchedBtn) {
                         answersToSave[prevQ] = matchedBtn.buttonText;
