@@ -146,16 +146,6 @@ exports.receiveWebhook = async (req, res) => {
                 sessionDoc.lastQuestion = questionName;
                 sessionDoc.pendingRuntimePostbackId = rawPostbackId;
                 nextStep = currentStep + 1;
-                
-                // In case this is the LAST question and won't be resolved by a future step, save placeholder
-                await Bot.updateOne(
-                    { apiKey },
-                    { $push: { learnedPostbacks: {
-                        runtimePostbackId: rawPostbackId,
-                        buttonText: `[Postback: ${rawPostbackId}]`,
-                        sourceNodeName: questionName
-                    }}}
-                );
             }
         } else if (userMessage) {
             if (!isTriggerKeyword) {
