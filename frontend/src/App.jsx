@@ -87,7 +87,7 @@ function App() {
       const parsed = JSON.parse(jsonInput);
       const res = await axios.post(`${API_BASE}/bot/upload`, parsed, authHeader);
       setApiKey(res.data.apiKey);
-      setFields(res.data.fields);
+      // setFields(res.data.fields); // Remove this as it's undefined and causes crash
       localStorage.setItem('last_apikey', res.data.apiKey);
       await fetchMyBots();
       setActiveTab('dashboard');
@@ -106,9 +106,11 @@ function App() {
     if (!apiKey) return;
     try {
       setLoading(true);
+      setEntries([]); // Clear previous entries
+      setFields([]);  // Clear previous fields
       const res = await axios.get(`${API_BASE}/webhook/entries/${apiKey}`, authHeader);
-      setEntries(res.data.entries);
-      setFields(res.data.fields);
+      setEntries(res.data.entries || []);
+      setFields(res.data.fields || []);
     } catch (err) {
       console.error(err);
     } finally {
