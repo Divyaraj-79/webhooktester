@@ -45,6 +45,65 @@ function getFieldName(bot, rawKey) {
     return cleanK;
 }
 
+// ── BizzRiser Real-time Data Enrichment ─────────────────────────────────────
+async function enrichFromBizzRiser(bot, phone, chatDataId) {
+    try {
+        console.log(`🔍 [Enrich] Triggered for ${phone} (Bot: ${bot.name})`);
+        
+        const bizzRes = await fetch('https://dash.bizzriser.com/api/v1/whatsapp/subscriber/get', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `apiToken=${bot.bizzriserToken}&phone_number_id=${bot.phoneNumberId}&phone_number=${phone}`
+        });
+
+        const bizzData = await bizzRes.json();
+        if (bizzData.status !== "1" || !bizzData.message || bizzData.message.length === 0) {
+            console.log(`⚠️ [Enrich] No data found for ${phone} on BizzRiser`);
+            return;
+        }
+
+        const subscriber = bizzData.message[0];
+        const answersToUpdate = {};
+
+        // Map standard fields
+        if (subscriber.first_name) answersToUpdate['Name'] = subscriber.first_name + (subscriber.last_name ? ' ' + subscriber.last_name : '');
+        if (subscriber.email) answersToUpdate['Email'] = subscriber.email;
+
+        // BizzRiser often sends custom fields as top-level keys in this response
+        // Or in a 'custom_fields' array. Let's handle both.
+        const skipKeys = new Set(['subscriber_id', 'chat_id', 'first_name', 'last_name', 'email', 'gender', 'label_names', 'status', 'created_at', 'updated_at']);
+        
+        Object.keys(subscriber).forEach(key => {
+            if (!skipKeys.has(key) && !isTechnicalKey(key)) {
+                // Try to map key to a friendly field name if it matches a postback fieldName
+                const friendlyKey = getFieldName(bot, key);
+                answersToUpdate[friendlyKey] = String(subscriber[key]);
+            }
+        });
+
+        if (subscriber.custom_fields && Array.isArray(subscriber.custom_fields)) {
+            subscriber.custom_fields.forEach(cf => {
+                if (cf.name && cf.value) {
+                    const friendlyKey = getFieldName(bot, cf.name);
+                    answersToUpdate[friendlyKey] = String(cf.value);
+                }
+            });
+        }
+
+        if (Object.keys(answersToUpdate).length > 0) {
+            const setQuery = {};
+            Object.keys(answersToUpdate).forEach(k => {
+                setQuery[`answers.${k.replace(/\./g, '_DOT_')}`] = answersToUpdate[k];
+            });
+            await ChatData.updateOne({ _id: chatDataId }, { $set: setQuery });
+            console.log(`✅ [Enrich] Successfully updated ${Object.keys(answersToUpdate).length} fields for ${phone}`);
+        }
+
+    } catch (err) {
+        console.error("❌ [Enrich] Error:", err.message);
+    }
+}
+
 // Get ordered list of unique question columns from bot.postbacks
 function getQuestionOrder(botPostbacks) {
     const questionOrder = [];
@@ -278,6 +337,13 @@ exports.receiveWebhook = async (req, res) => {
 
         console.log(`💾 Saved session ${sessionId}`);
         res.sendStatus(200);
+
+        // EXTRA: Background Enrichment if BizzRiser credentials exist
+        if (bot.bizzriserToken && bot.phoneNumberId && phone) {
+            setTimeout(() => {
+                enrichFromBizzRiser(bot, phone, sessionDoc._id).catch(console.error);
+            }, 1000); // 1s delay to allow BizzRiser to finish internal processing
+        }
 
     } catch (err) {
         console.error("❌ Webhook error:", err);
