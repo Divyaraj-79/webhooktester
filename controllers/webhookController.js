@@ -20,14 +20,39 @@ function isTechnicalKey(key) {
     return false;
 }
 
+// Helper to map a question text to a Custom Field name if available
+function getFieldName(bot, rawKey) {
+    if (!rawKey) return '';
+    const cleanK = String(rawKey).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+    
+    // 1. Check in postbacks (Buttons)
+    const pbMatch = (bot.postbacks || []).find(p => 
+        p.sourceNodeName === cleanK || 
+        cleanK.startsWith(p.sourceNodeName) || 
+        p.sourceNodeName.startsWith(cleanK.substring(0, 40)) // Handle truncation
+    );
+    if (pbMatch && pbMatch.fieldName) return pbMatch.fieldName;
+
+    // 2. Check in fields (Text Inputs)
+    const fieldMatch = (bot.fields || []).find(f => 
+        f.questionText === cleanK || 
+        cleanK.includes(f.questionText) || 
+        f.questionText.includes(cleanK)
+    );
+    if (fieldMatch && fieldMatch.fieldName) return fieldMatch.fieldName;
+
+    return cleanK;
+}
+
 // Get ordered list of unique question columns from bot.postbacks
 function getQuestionOrder(botPostbacks) {
     const questionOrder = [];
     const seen = new Set();
     (botPostbacks || []).forEach(p => {
-        if (p.sourceNodeName && !seen.has(p.sourceNodeName)) {
-            seen.add(p.sourceNodeName);
-            questionOrder.push(p.sourceNodeName);
+        const key = p.fieldName || p.sourceNodeName;
+        if (key && !seen.has(key)) {
+            seen.add(key);
+            questionOrder.push(key);
         }
     });
     return questionOrder;
@@ -52,14 +77,7 @@ exports.receiveWebhook = async (req, res) => {
         if (Array.isArray(data.user_input_data)) {
             data.user_input_data.forEach(item => {
                 if (item.question && item.answer !== undefined) {
-                    const cleanQ = String(item.question).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-                    // Match with stored custom fields for text inputs
-                    const matchedField = (bot.fields || []).find(f => 
-                        f.questionText === cleanQ || 
-                        cleanQ.includes(f.questionText) || 
-                        f.questionText.includes(cleanQ)
-                    );
-                    const key = matchedField ? matchedField.fieldName : cleanQ;
+                    const key = getFieldName(bot, item.question);
                     answersToSave[key] = String(item.answer);
                 }
             });
@@ -173,7 +191,7 @@ exports.receiveWebhook = async (req, res) => {
 
             // Final Update for Current Step
             if (matchedBtn) {
-                const questionKey = matchedBtn.fieldName || currentQuestion;
+                const questionKey = getFieldName(bot, currentQuestion);
                 answersToSave[questionKey] = matchedBtn.buttonText;
                 sessionDoc.lastQuestion = matchedBtn.nextQuestion;
                 sessionDoc.pendingRuntimePostbackId = null;
@@ -267,11 +285,23 @@ exports.getEntriesByApiKey = async (req, res) => {
         if (dynamicKeys.has('WhatsApp Number')) allFields.push('WhatsApp Number');
         
         const questionOrder = getQuestionOrder(bot.postbacks);
+        
+        // Add fields from bot.fields (text inputs) if not already in questionOrder
+        (bot.fields || []).forEach(f => {
+            if (f.fieldName && !questionOrder.includes(f.fieldName)) {
+                questionOrder.push(f.fieldName);
+            }
+        });
+
         questionOrder.forEach(q => {
             if (!allFields.includes(q)) allFields.push(q);
         });
         
-        dynamicKeys.forEach(k => { if (!allFields.includes(k)) allFields.push(k); });
+        dynamicKeys.forEach(k => { 
+            // Try to map existing dynamicKeys to field names if they were saved as question text
+            const mappedK = getFieldName(bot, k);
+            if (!allFields.includes(mappedK)) allFields.push(mappedK); 
+        });
 
         const formatted = entries.map(entry => {
             const answers = entry.answers || {};

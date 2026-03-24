@@ -94,7 +94,7 @@ exports.uploadBot = async (req, res) => {
                     const raw = node.data.textMessage || node.data.headerText;
                     const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 3);
                     const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
-                    const result = qLine ? qLine.substring(0, 50).trim() : null;
+                    const result = qLine ? qLine.substring(0, 200).trim() : null;
                     memoNextQ.set(nodeId, result);
                     return result;
                 }
@@ -129,7 +129,7 @@ exports.uploadBot = async (req, res) => {
                 fieldsMap.set(fieldId, {
                     fieldId,
                     fieldName,
-                    questionText: qText.substring(0, 100).trim()
+                    questionText: qText.substring(0, 200).trim()
                 });
             }
 
@@ -150,7 +150,7 @@ exports.uploadBot = async (req, res) => {
                         if (parentText) {
                             const lines = parentText.split('\n').map(l => l.trim()).filter(l => l.length > 3);
                             const qLine = lines.find(l => l.includes('?')) || lines[lines.length - 1] || lines[0];
-                            sourceNodeName = qLine ? qLine.substring(0, 40).trim() : sourceNodeName;
+                            sourceNodeName = qLine ? qLine.substring(0, 200).trim() : sourceNodeName;
                         }
                     } catch (e) {
                         // Avoid crashing on weird graphs
