@@ -249,14 +249,22 @@ exports.deleteBot = async (req, res) => {
         const userId = req.user.id;
 
         const bot = await Bot.findOne({ apiKey, owner: userId });
-        if (!bot) return res.status(404).json({ error: "Bot not found" });
+        if (!bot) {
+            console.log(`⚠️ [deleteBot] Bot not found or unauthorized: ${apiKey}`);
+            return res.status(404).json({ error: "Bot not found or unauthorized" });
+        }
 
-        // Delete all chat data
+        // 1. Delete all chat data
         const deleteData = await ChatData.deleteMany({ apiKey, owner: userId });
-        console.log(`🗑️ Deleted ${deleteData.deletedCount} chat entries for bot: ${apiKey}`);
+        console.log(`🗑️ [deleteBot] Deleted ${deleteData.deletedCount} chat entries`);
 
-        // Delete bot entry
+        // 2. Delete GlobalPostback mappings (to avoid clutter)
+        const deleteGlobal = await GlobalPostback.deleteMany({ botName: bot.name, owner: userId });
+        console.log(`🗑️ [deleteBot] Deleted ${deleteGlobal.deletedCount} global postback mappings`);
+
+        // 3. Delete bot entry
         await Bot.findByIdAndDelete(bot._id);
+        console.log(`✅ [deleteBot] Bot ${apiKey} successfully removed from DB`);
         
         res.json({ message: "Bot and associated data deleted successfully" });
     } catch (err) {

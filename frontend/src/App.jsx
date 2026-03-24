@@ -171,23 +171,24 @@ function App() {
       setLoading(true);
       await axios.delete(`${API_BASE}/bot/${apiKeyToDelete}`, authHeader);
       
-      // Update bots list
-      setMyBots(prev => prev.filter(b => b.apiKey !== apiKeyToDelete));
-      
-      // If we deleted the active bot, reset it
-      if (apiKey === apiKeyToDelete) {
-        const remainingBots = myBots.filter(b => b.apiKey !== apiKeyToDelete);
-        if (remainingBots.length > 0) {
-          setApiKey(remainingBots[0].apiKey);
-        } else {
-          setApiKey('');
-          setEntries([]);
+      // Update bots list and active bot atomically
+      setMyBots(prev => {
+        const updated = prev.filter(b => b.apiKey !== apiKeyToDelete);
+        if (apiKey === apiKeyToDelete) {
+          if (updated.length > 0) {
+            setApiKey(updated[0].apiKey);
+          } else {
+            setApiKey('');
+            setEntries([]);
+          }
         }
-      }
+        return updated;
+      });
       
       setStatus('Bot deleted successfully');
       setTimeout(() => setStatus(''), 3000);
     } catch (err) {
+      console.error("Delete error:", err);
       alert(err.response?.data?.error || 'Failed to delete bot');
     } finally {
       setLoading(false);
