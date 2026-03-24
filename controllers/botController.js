@@ -44,6 +44,35 @@ exports.uploadBot = async (req, res) => {
             memoParents.set(nodeId, null);
             return null;
         }
+        
+        // --- Added: Recursive Parent Field Name Fetcher ---
+        const memoFieldNames = new Map();
+        function getParentFieldName(nodeId, visited = new Set()) {
+            if (!nodeId || visited.has(nodeId)) return null;
+            if (memoFieldNames.has(nodeId)) return memoFieldNames.get(nodeId);
+            visited.add(nodeId);
+            const node = nodeMap[nodeId];
+            if (!node) return null;
+
+            // If this node has a fieldName, return it
+            if (node.data && node.data.customFieldSelectedOptionText && node.data.customFieldSelectedOptionText !== 'Select') {
+                const fName = node.data.customFieldSelectedOptionText;
+                memoFieldNames.set(nodeId, fName);
+                return fName;
+            }
+
+            // Otherwise check inputs
+            const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
+            for (const conn of inputConnections) {
+                const parentField = getParentFieldName(conn.node, visited);
+                if (parentField) {
+                    memoFieldNames.set(nodeId, parentField);
+                    return parentField;
+                }
+            }
+            memoFieldNames.set(nodeId, null);
+            return null;
+        }
 
         // Trace FORWARD from a button output to find the NEXT question text
         const memoNextQ = new Map();
@@ -139,6 +168,13 @@ exports.uploadBot = async (req, res) => {
 
                 // Extract Custom Field Name if available
                 let fieldName = node.data.customFieldSelectedOptionText;
+                if (fieldName === 'Select' || !fieldName) {
+                    // Search recursively up the chain for a field name (e.g. from parent question)
+                    const inputConnections = node.inputs ? Object.values(node.inputs).flatMap(i => i.connections || []) : [];
+                    if (inputConnections.length > 0) {
+                        fieldName = getParentFieldName(inputConnections[0].node);
+                    }
+                }
                 if (fieldName === 'Select' || !fieldName) fieldName = null;
 
                 postbacksMap.set(postbackId, {

@@ -53,7 +53,14 @@ exports.receiveWebhook = async (req, res) => {
             data.user_input_data.forEach(item => {
                 if (item.question && item.answer !== undefined) {
                     const cleanQ = String(item.question).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
-                    answersToSave[cleanQ] = String(item.answer);
+                    // Match with stored custom fields for text inputs
+                    const matchedField = (bot.fields || []).find(f => 
+                        f.questionText === cleanQ || 
+                        cleanQ.includes(f.questionText) || 
+                        f.questionText.includes(cleanQ)
+                    );
+                    const key = matchedField ? matchedField.fieldName : cleanQ;
+                    answersToSave[key] = String(item.answer);
                 }
             });
         }
