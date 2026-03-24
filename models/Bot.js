@@ -20,6 +20,7 @@ const BotSchema = new mongoose.Schema({
             postbackId: String,
             buttonText: String,
             sourceNodeName: String,
+            fieldName: String,      // Custom Field Name from JSON
             nextQuestion: String   // which question comes AFTER clicking this button
         }
     ],

@@ -33,9 +33,18 @@ app.use('/api/webhook', webhookRoutes);
 //     res.sendStatus(200);
 // });
 
-// Root
+// Root & Health
 app.get('/', (req, res) => {
     res.send('Server running 🚀');
+});
+
+app.get('/api/health', (req, res) => {
+    const status = {
+        server: 'running',
+        database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+        dbState: mongoose.connection.readyState
+    };
+    res.json(status);
 });
 
 // 👇 ADD HERE

@@ -109,7 +109,7 @@ exports.uploadBot = async (req, res) => {
             const buttonText = (node.data.buttonText || node.data.title || node.data.text || '').toString().trim();
 
             // Only extract postbacks from interactive elements (not trigger nodes)
-            const BUTTON_NODE_TYPES = ['Inline Button', 'Rows', 'Button', 'Quick Reply'];
+            const BUTTON_NODE_TYPES = ['Inline Button', 'Rows', 'Button', 'Quick Reply', 'Keyboard'];
             if (postbackId && buttonText && BUTTON_NODE_TYPES.includes(node.name)) {
                 let sourceNodeName = node.name || 'Button';
                 
@@ -137,10 +137,15 @@ exports.uploadBot = async (req, res) => {
                     nextQuestion = getNextQuestion(outputConns[0].node);
                 }
 
+                // Extract Custom Field Name if available
+                let fieldName = node.data.customFieldSelectedOptionText;
+                if (fieldName === 'Select' || !fieldName) fieldName = null;
+
                 postbacksMap.set(postbackId, {
                     postbackId,
                     buttonText,
                     sourceNodeName,
+                    fieldName,
                     nextQuestion: nextQuestion || null
                 });
             }

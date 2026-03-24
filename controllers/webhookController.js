@@ -111,7 +111,8 @@ exports.receiveWebhook = async (req, res) => {
 
                 if (resolvedPrev) {
                     console.log(`🔄 [Retro] Resolved "${prevId}" as "${resolvedPrev.buttonText}" via current ID "${rawPostbackId}"`);
-                    answersToSave[prevQ] = resolvedPrev.buttonText;
+                    const prevQuestionKey = resolvedPrev.fieldName || prevQ;
+                    answersToSave[prevQuestionKey] = resolvedPrev.buttonText;
                     currentQuestion = resolvedPrev.nextQuestion; // Sync current state
                     
                     // Learn the prev ID globally
@@ -165,7 +166,8 @@ exports.receiveWebhook = async (req, res) => {
 
             // Final Update for Current Step
             if (matchedBtn) {
-                answersToSave[currentQuestion] = matchedBtn.buttonText;
+                const questionKey = matchedBtn.fieldName || currentQuestion;
+                answersToSave[questionKey] = matchedBtn.buttonText;
                 sessionDoc.lastQuestion = matchedBtn.nextQuestion;
                 sessionDoc.pendingRuntimePostbackId = null;
 
