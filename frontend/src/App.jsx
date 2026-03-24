@@ -21,6 +21,9 @@ function App() {
   const [myBots, setMyBots] = useState([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+  const [bizzToken, setBizzToken] = useState('');
+  const [bizzPhoneId, setBizzPhoneId] = useState('');
 
   // Auth States
   const [email, setEmail] = useState('');
@@ -162,6 +165,38 @@ function App() {
     navigator.clipboard.writeText(url);
     setStatus('Copied to clipboard!');
     setTimeout(() => setStatus(''), 2000);
+  };
+
+  const handleUpdateSettings = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      await axios.put(`${API_BASE}/bot/settings/${apiKey}`, {
+        bizzriserToken: bizzToken,
+        phoneNumberId: bizzPhoneId
+      }, authHeader);
+      setStatus('Settings updated!');
+      setShowSettings(false);
+      await fetchMyBots();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Update failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSyncBizzRiser = async () => {
+    try {
+      setLoading(true);
+      const res = await axios.post(`${API_BASE}/bot/sync/${apiKey}`, {}, authHeader);
+      setStatus(res.data.message);
+      await fetchMyBots(); // Refresh fields
+      await fetchEntries(); // Refresh table
+    } catch (err) {
+      alert(err.response?.data?.error || 'Sync failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleDeleteBot = async (apiKeyToDelete) => {
@@ -354,6 +389,17 @@ function App() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: '0.8rem' }}>
+                      <button className="btn btn-secondary" onClick={() => {
+                        const bot = myBots.find(b => b.apiKey === apiKey);
+                        setBizzToken(bot?.bizzriserToken || '');
+                        setBizzPhoneId(bot?.phoneNumberId || '');
+                        setShowSettings(!showSettings);
+                      }}>
+                        <ShieldCheck size={18} /> API Config
+                      </button>
+                      <button className="btn btn-secondary" onClick={handleSyncBizzRiser} disabled={loading} title="Fetch data/mapping from BizzRiser">
+                        <Zap size={18} /> Sync Mapping
+                      </button>
                       <button className="btn btn-secondary" onClick={fetchEntries} disabled={loading}>
                         Refresh
                       </button>
@@ -362,6 +408,33 @@ function App() {
                       </button>
                     </div>
                   </div>
+
+                  {showSettings && (
+                    <div className="card" style={{ marginBottom: '2rem', border: '1px solid var(--primary)', animation: 'slideDown 0.3s ease-out' }}>
+                      <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <ShieldCheck size={18} color="var(--primary)" /> BizzRiser API Settings
+                      </h3>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '1.5rem' }}>
+                        Providing these allows the system to automatically map buttons and sync custom field values.
+                      </p>
+                      <form onSubmit={handleUpdateSettings}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                          <div className="input-group" style={{ marginBottom: 0 }}>
+                            <label>BizzRiser apiToken</label>
+                            <input type="text" value={bizzToken} onChange={e => setBizzToken(e.target.value)} placeholder="API-KEY-XXX" />
+                          </div>
+                          <div className="input-group" style={{ marginBottom: 0 }}>
+                            <label>Phone Number ID</label>
+                            <input type="text" value={bizzPhoneId} onChange={e => setBizzPhoneId(e.target.value)} placeholder="PHONE-ID-XXX" />
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '1rem' }}>
+                          <button className="btn" type="submit" disabled={loading}>Save Credentials</button>
+                          <button className="btn btn-secondary" type="button" onClick={() => setShowSettings(false)}>Cancel</button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
 
                   <div className="table-container">
                     <table>

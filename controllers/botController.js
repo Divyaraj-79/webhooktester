@@ -2,6 +2,7 @@ const Bot = require('../models/Bot');
 const ChatData = require('../models/ChatData');
 const GlobalPostback = require('../models/GlobalPostback');
 const crypto = require('crypto');
+// axios is not needed, using native fetch (Node 18+)
 
 // Upload chatbot JSON
 exports.uploadBot = async (req, res) => {
@@ -239,6 +240,91 @@ exports.getMyBots = async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch bots" });
+    }
+};
+
+// Update Bot Settings (API Credentials)
+exports.updateBotSettings = async (req, res) => {
+    try {
+        const { apiKey } = req.params;
+        const { bizzriserToken, phoneNumberId } = req.body;
+        const userId = req.user.id;
+
+        const bot = await Bot.findOneAndUpdate(
+            { apiKey, owner: userId },
+            { bizzriserToken, phoneNumberId },
+            { new: true }
+        );
+
+        if (!bot) return res.status(404).json({ error: "Bot not found" });
+
+        res.json({ message: "Settings updated successfully", bot });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Failed to update settings" });
+    }
+};
+
+// Sync Bot Configuration from BizzRiser API
+exports.syncBizzRiser = async (req, res) => {
+    try {
+        const { apiKey } = req.params;
+        const userId = req.user.id;
+
+        const bot = await Bot.findOne({ apiKey, owner: userId });
+        if (!bot) return res.status(404).json({ error: "Bot not found" });
+        if (!bot.bizzriserToken || !bot.phoneNumberId) {
+            return res.status(400).json({ error: "BizzRiser credentials missing. Please update settings first." });
+        }
+
+        console.log(`🔄 [syncBizzRiser] Syncing bot: ${bot.name} (${apiKey})`);
+
+        // Call BizzRiser API using native fetch
+        const bizzRes = await fetch('https://dash.bizzriser.com/api/v1/whatsapp/get/post-back-list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `apiToken=${bot.bizzriserToken}&phone_number_id=${bot.phoneNumberId}`
+        });
+
+        const bizzData = await bizzRes.json();
+
+        if (bizzData.status !== "1") {
+            return res.status(400).json({ error: bizzData.message || "BizzRiser API error" });
+        }
+
+        const bizzPostbacks = bizzData.message || [];
+        console.log(`📥 [syncBizzRiser] Received ${bizzPostbacks.length} postbacks from BizzRiser`);
+
+        // Map BizzRiser postbacks to our model
+        // We match them by "bot_name" if possible, or just update all
+        let updatedCount = 0;
+        bizzPostbacks.forEach(bp => {
+            // Find if this postback exists in our bot flow already
+            const existing = bot.postbacks.find(p => p.buttonText === bp.bot_name || p.postbackId === bp.postback_id);
+            
+            if (existing) {
+                existing.postbackId = bp.postback_id;
+                // If BizzRiser has a custom field title, use it!
+                if (bp.custom_field_index_title) {
+                    existing.fieldName = bp.custom_field_index_title;
+                }
+                updatedCount++;
+            } else {
+                // If it's a new postback found in the API but not in JSON, add it?
+                // For now, let's just update existing ones to avoid inflating the bot flow
+            }
+        });
+
+        await bot.save();
+        res.json({ 
+            message: `Sync complete! Highly reliable mappings applied.`, 
+            updatedCount,
+            totalFromApi: bizzPostbacks.length
+        });
+
+    } catch (err) {
+        console.error("❌ Sync Error:", err.response?.data || err.message);
+        res.status(500).json({ error: "Failed to sync with BizzRiser" });
     }
 };
 

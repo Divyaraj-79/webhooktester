@@ -8,6 +8,8 @@ const BotSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
+    bizzriserToken: String,
+    phoneNumberId: String,
     fields: [
         {
             fieldId: String,
