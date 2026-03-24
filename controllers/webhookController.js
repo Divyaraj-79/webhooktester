@@ -1,5 +1,5 @@
-const ChatData = require('../models/ChatData');
 const Bot = require('../models/Bot');
+const GlobalPostback = require('../models/GlobalPostback');
 const botMappings = require('../config/botMappings'); // Import manual static mappings
 
 const SKIP_KEYS = new Set([
@@ -171,14 +171,26 @@ exports.receiveWebhook = async (req, res) => {
                 }
             }
 
-            // 2. CHECK GLOBALLY LEARNED MAPPINGS
+            // 2. CHECK GLOBALLY LEARNED MAPPINGS (Bot-specific then Global)
             if (!matchedBtn) {
                 const learned = bot.learnedPostbacks.find(l => l.runtimePostbackId === rawPostbackId);
                 if (learned) {
                     matchedBtn = allPostbacks.find(p => p.buttonText === learned.buttonText);
-                    if (matchedBtn) {
-                        console.log(`✅ Learned Mapping: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
+                }
+                
+                if (!matchedBtn) {
+                    const globalL = await GlobalPostback.findOne({ 
+                        botName: bot.name, 
+                        owner: bot.owner, 
+                        runtimePostbackId: rawPostbackId 
+                    });
+                    if (globalL) {
+                        matchedBtn = allPostbacks.find(p => p.buttonText === globalL.buttonText);
                     }
+                }
+
+                if (matchedBtn) {
+                    console.log(`✅ Learned Mapping: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
                 }
             }
 
@@ -202,7 +214,7 @@ exports.receiveWebhook = async (req, res) => {
                 sessionDoc.lastQuestion = matchedBtn.nextQuestion;
                 sessionDoc.pendingRuntimePostbackId = null;
 
-                // Save learning
+                // Save learning (Local + Global)
                 if (!bot.learnedPostbacks.find(l => l.runtimePostbackId === rawPostbackId)) {
                     bot.learnedPostbacks.push({
                         runtimePostbackId: rawPostbackId,
@@ -210,6 +222,13 @@ exports.receiveWebhook = async (req, res) => {
                         sourceNodeName: currentQuestion
                     });
                     await bot.save();
+
+                    // Update Global Learning
+                    await GlobalPostback.findOneAndUpdate(
+                        { botName: bot.name, owner: bot.owner, runtimePostbackId: rawPostbackId },
+                        { buttonText: matchedBtn.buttonText, sourceNodeName: currentQuestion },
+                        { upsert: true, new: true }
+                    );
                 }
             } else {
                 // DO NOT GUESS. Keep placeholder.

@@ -1,5 +1,6 @@
 const Bot = require('../models/Bot');
 const ChatData = require('../models/ChatData');
+const GlobalPostback = require('../models/GlobalPostback');
 const crypto = require('crypto');
 
 // Upload chatbot JSON
@@ -197,15 +198,24 @@ exports.uploadBot = async (req, res) => {
         const startNode = Object.values(botData.nodes || {}).find(n => n.name === 'Start Bot Flow');
         const botName = startNode?.data?.title || 'My Bot';
         
+        // Pre-seed learnedPostbacks from Global memory if this bot name was used before
+        const globalLearned = await GlobalPostback.find({ botName, owner: req.user.id });
+        const learnedPostbacks = globalLearned.map(g => ({
+            runtimePostbackId: g.runtimePostbackId,
+            buttonText: g.buttonText,
+            sourceNodeName: g.sourceNodeName
+        }));
+
         const bot = await Bot.create({
             apiKey,
             name: botName,
             owner: req.user.id,
             fields,
-            postbacks
+            postbacks,
+            learnedPostbacks
         });
 
-        console.log(`✅ [botController] Bot "${botName}" created with ${postbacks.length} postbacks!`);
+        console.log(`✅ [botController] Bot "${botName}" created with ${postbacks.length} postbacks and ${learnedPostbacks.length} inherited learnings!`);
         res.json({
             message: "Bot uploaded successfully",
             apiKey: bot.apiKey,
