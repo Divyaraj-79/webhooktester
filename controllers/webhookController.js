@@ -156,8 +156,14 @@ exports.receiveWebhook = async (req, res) => {
             // B. Resolve Current Webhook
             let matchedBtn = null;
 
-            // 1. CHECK MANUAL STATIC MAPPINGS (Reliable)
-            if (botMappings[rawPostbackId]) {
+            // 1. CHECK BOT POSTBACKS DIRECTLY (JSON Static IDs)
+            matchedBtn = allPostbacks.find(p => p.postbackId === rawPostbackId && (p.sourceNodeName === currentQuestion || !currentQuestion));
+            if (matchedBtn) {
+                console.log(`✅ Direct ID Match: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
+            }
+
+            // 2. CHECK MANUAL STATIC MAPPINGS (Reliable)
+            if (!matchedBtn && botMappings[rawPostbackId]) {
                 const manualText = botMappings[rawPostbackId];
                 matchedBtn = allPostbacks.find(p => p.buttonText.trim() === manualText.trim() && p.sourceNodeName === currentQuestion);
                 if (matchedBtn) {
@@ -208,10 +214,11 @@ exports.receiveWebhook = async (req, res) => {
             } else {
                 // DO NOT GUESS. Keep placeholder.
                 if (currentQuestion) {
-                    answersToSave[currentQuestion] = `[Postback: ${rawPostbackId}]`;
+                    const questionKey = getFieldName(bot, currentQuestion);
+                    answersToSave[questionKey] = `[Postback: ${rawPostbackId}]`;
                     sessionDoc.lastQuestion = currentQuestion;
                     sessionDoc.pendingRuntimePostbackId = rawPostbackId;
-                    console.log(`⏳ Pending: ${rawPostbackId} at ${currentQuestion}`);
+                    console.log(`⏳ Pending: ${rawPostbackId} at ${currentQuestion} (Mapped to ${questionKey})`);
                 }
             }
         } else if (userMessage && !isTriggerKeyword) {
