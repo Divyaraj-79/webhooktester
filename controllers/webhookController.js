@@ -71,7 +71,7 @@ async function enrichFromBizzRiser(bot, phone, chatDataId) {
 
         // BizzRiser often sends custom fields as top-level keys in this response
         // Or in a 'custom_fields' array. Let's handle both.
-        const skipKeys = new Set(['subscriber_id', 'chat_id', 'first_name', 'last_name', 'email', 'gender', 'label_names', 'status', 'created_at', 'updated_at']);
+        const skipKeys = new Set(['subscriber_id', 'chat_id', 'first_name', 'last_name', 'email', 'gender', 'label_names', 'status', 'created_at', 'updated_at', 'custom_fields']);
         
         Object.keys(subscriber).forEach(key => {
             if (!skipKeys.has(key) && !isTechnicalKey(key)) {
@@ -81,13 +81,27 @@ async function enrichFromBizzRiser(bot, phone, chatDataId) {
             }
         });
 
-        if (subscriber.custom_fields && Array.isArray(subscriber.custom_fields)) {
-            subscriber.custom_fields.forEach(cf => {
-                if (cf.name && cf.value) {
-                    const friendlyKey = getFieldName(bot, cf.name);
-                    answersToUpdate[friendlyKey] = String(cf.value);
-                }
-            });
+        if (subscriber.custom_fields) {
+            if (Array.isArray(subscriber.custom_fields)) {
+                subscriber.custom_fields.forEach(cf => {
+                    if (cf.name && cf.value) {
+                        const friendlyKey = getFieldName(bot, cf.name);
+                        answersToUpdate[friendlyKey] = String(cf.value);
+                    }
+                });
+            } else if (typeof subscriber.custom_fields === 'string') {
+                // Parse BizzRiser's comma-separated custom fields string: "Key:Value,Key:Value"
+                const pairs = subscriber.custom_fields.split(',');
+                pairs.forEach(pair => {
+                    const [rawKey, ...valParts] = pair.split(':');
+                    if (rawKey && valParts.length > 0) {
+                        const cleanK = rawKey.trim();
+                        const cleanV = valParts.join(':').trim(); // Handle colons in values
+                        const friendlyKey = getFieldName(bot, cleanK);
+                        answersToUpdate[friendlyKey] = cleanV;
+                    }
+                });
+            }
         }
 
         if (Object.keys(answersToUpdate).length > 0) {
