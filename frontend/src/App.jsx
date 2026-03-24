@@ -45,7 +45,7 @@ function App() {
     try {
       setLoading(true);
       const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register';
-      const res = await axios.post(`${API_BASE}${endpoint}`, { email, password });
+      const res = await axios.post(`${API_BASE}${endpoint}`, { email, password }, { timeout: 10000 });
       
       setUser(res.data.user);
       setToken(res.data.token);
@@ -53,7 +53,12 @@ function App() {
       localStorage.setItem('token', res.data.token);
       setStatus(`Welcome back, ${res.data.user.email}`);
     } catch (err) {
-      alert(err.response?.data?.error || 'Authentication Failed');
+      console.error("Auth Error:", err);
+      if (err.code === 'ECONNABORTED') {
+        alert('Authentication timed out. The server might be waking up, please try again in a moment.');
+      } else {
+        alert(err.response?.data?.error || err.message || 'Authentication Failed');
+      }
     } finally {
       setLoading(false);
     }

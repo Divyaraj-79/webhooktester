@@ -1,10 +1,16 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 
 exports.register = async (req, res) => {
     try {
         const { email, password } = req.body;
         console.log("👤 [authController] Register attempt for:", email);
+
+        if (mongoose.connection.readyState !== 1) {
+            console.error("❌ [authController] DB not connected!");
+            return res.status(500).json({ error: "Database not connected. Please check your MONGO_URI." });
+        }
         
         let user = await User.findOne({ email });
         if (user) {
@@ -26,6 +32,12 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
     try {
         const { email, password } = req.body;
+        console.log("👤 [authController] Login attempt for:", email);
+
+        if (mongoose.connection.readyState !== 1) {
+            console.error("❌ [authController] DB not connected!");
+            return res.status(500).json({ error: "Database not connected. Please check your MONGO_URI." });
+        }
         
         const user = await User.findOne({ email });
         if (!user) return res.status(400).json({ error: "Invalid credentials" });
