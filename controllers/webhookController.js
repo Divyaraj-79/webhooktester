@@ -1,4 +1,5 @@
 const Bot = require('../models/Bot');
+const ChatData = require('../models/ChatData');
 const GlobalPostback = require('../models/GlobalPostback');
 const botMappings = require('../config/botMappings'); // Import manual static mappings
 
