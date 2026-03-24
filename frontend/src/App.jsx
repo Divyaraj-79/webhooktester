@@ -4,6 +4,7 @@ import {
   Upload, LayoutDashboard, Copy, Download, Zap, Database, 
   CheckCircle2, LogIn, UserPlus, LogOut, ShieldCheck, Mail, Lock, PlusCircle, Trash2
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
 
@@ -120,18 +121,32 @@ function App() {
 
   const exportToExcel = () => {
     try {
-      const headerRow = ['Date', 'Name', 'Phone', ...fields].map(f => `"${String(f).replace(/"/g, '""')}"`).join(',');
-      const dataRows = entries.map(entry => {
-        const rowData = [new Date(entry.updatedAt).toLocaleString(), entry.name, entry.phone, ...fields.map(f => entry[f] || 'N/A')];
-        return rowData.map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
+      // Create a new workbook and worksheet
+      const wb = XLSX.utils.book_new();
+      
+      // Prepare data for the worksheet
+      const data = entries.map(entry => {
+        const row = {
+          'Date': new Date(entry.updatedAt).toLocaleString(),
+          'Name': entry.name,
+          'Phone': entry.phone
+        };
+        fields.forEach(f => {
+          row[f] = entry[f] || 'N/A';
+        });
+        return row;
       });
-      const csvContent = [headerRow, ...dataRows].join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `webhook_export_${apiKey.slice(0, 6)}.csv`;
-      link.click();
+
+      const ws = XLSX.utils.json_to_sheet(data);
+
+      // Add worksheet to workbook
+      XLSX.utils.book_append_sheet(wb, ws, "Chatbot Data");
+
+      // Generate and download file
+      XLSX.writeFile(wb, `webhook_export_${apiKey.slice(0, 6)}.xlsx`);
+      
+      setStatus('Excel exported successfully!');
+      setTimeout(() => setStatus(''), 3000);
     } catch (err) {
       alert("Export failed: " + err.message);
     }
