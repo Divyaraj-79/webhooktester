@@ -1,5 +1,6 @@
 const ChatData = require('../models/ChatData');
 const Bot = require('../models/Bot');
+const botMappings = require('../config/botMappings'); // Import manual static mappings
 
 const SKIP_KEYS = new Set([
     'postbackid', 'postbackId', 'user_input_data', 'chat_id', 'whatsapp_bot_username',
@@ -77,82 +78,124 @@ exports.receiveWebhook = async (req, res) => {
         const questionOrder = getQuestionOrder(allPostbacks);
         const rootQuestion = questionOrder[0] || '';
         let currentQuestion = sessionDoc.lastQuestion || rootQuestion;
+
         if (rawPostbackId) {
-            // A. Retroactively resolve PREVIOUS button if pending
+            // A. Retroactive Back-fill for Previous Unresolved Step
             if (sessionDoc.pendingRuntimePostbackId && sessionDoc.lastQuestion) {
                 const prevQ = sessionDoc.lastQuestion;
                 const prevId = sessionDoc.pendingRuntimePostbackId;
                 const branches = allPostbacks.filter(p => p.sourceNodeName === prevQ);
                 
-                let matchedBtn;
-                // 1. Resolve using common global memory
-                const learnedCurrent = (bot.learnedPostbacks || []).find(lp => lp.runtimePostbackId === rawPostbackId);
-                // 2. Resolve using CURRENT button text if BizzRiser sent it
-                if (learnedCurrent) {
-                    const targetQ = learnedCurrent.sourceNodeName;
-                    matchedBtn = branches.find(p => p.nextQuestion && (
-                        p.nextQuestion.trim().toLowerCase() === targetQ.trim().toLowerCase() ||
-                        targetQ.trim().toLowerCase().startsWith(p.nextQuestion.trim().toLowerCase())
-                    ));
-                }
-                
-                // Fallback to first branch if still unknown
-                if (!matchedBtn) matchedBtn = branches.find(p => p.nextQuestion);
+                // Which branch from PREVIOUS question leads to the current rawPostbackId's source node?
+                let resolvedPrev = null;
 
-                if (matchedBtn) {
-                    answersToSave[prevQ] = matchedBtn.buttonText;
-                    console.log(`🔄 Resolved prev "${prevId}" → "${matchedBtn.buttonText}"`);
-                    if (!(bot.learnedPostbacks || []).some(lp => lp.runtimePostbackId === prevId)) {
-                        await Bot.updateOne({ apiKey }, { $push: { learnedPostbacks: {
+                // 1. First, find if we know where THIS incoming ID belongs
+                let knownTargetForCurrent = null;
+                const currentLearned = (bot.learnedPostbacks || []).find(l => l.runtimePostbackId === rawPostbackId);
+                const currentStaticText = botMappings[rawPostbackId];
+                
+                if (currentStaticText) {
+                    const btn = allPostbacks.find(p => p.buttonText === currentStaticText);
+                    if (btn) knownTargetForCurrent = btn.sourceNodeName;
+                } else if (currentLearned) {
+                    knownTargetForCurrent = currentLearned.sourceNodeName;
+                }
+
+                // 2. If we know where the NEW id belongs, find which branch from PREV question leads there
+                if (knownTargetForCurrent) {
+                    resolvedPrev = branches.find(p => p.nextQuestion === knownTargetForCurrent);
+                }
+
+                // 3. AGGRESSIVE: If we still don't know, but there's ONLY ONE branch that leads to ANY known next step
+                // (This is a fallback for very complex flows)
+
+                if (resolvedPrev) {
+                    console.log(`🔄 [Retro] Resolved "${prevId}" as "${resolvedPrev.buttonText}" via current ID "${rawPostbackId}"`);
+                    answersToSave[prevQ] = resolvedPrev.buttonText;
+                    currentQuestion = resolvedPrev.nextQuestion; // Sync current state
+                    
+                    // Learn the prev ID globally
+                    if (!bot.learnedPostbacks.find(l => l.runtimePostbackId === prevId)) {
+                        bot.learnedPostbacks.push({
                             runtimePostbackId: prevId,
-                            buttonText: matchedBtn.buttonText,
+                            buttonText: resolvedPrev.buttonText,
                             sourceNodeName: prevQ
-                        }}});
+                        });
+                        bot.markModified('learnedPostbacks');
+                        await bot.save();
                     }
-                    currentQuestion = matchedBtn.nextQuestion;
                 }
             }
 
-            // B. Process CURRENT button
-            let learned = (bot.learnedPostbacks || []).find(lp => lp.runtimePostbackId === rawPostbackId);
-            
-            // NEW: If not learned globally, but we HAVE the button text in userMessage, use it!
-            if (!learned && userMessage && currentQuestion) {
+            // B. Resolve Current Webhook
+            let matchedBtn = null;
+
+            // 1. CHECK MANUAL STATIC MAPPINGS (Reliable)
+            if (botMappings[rawPostbackId]) {
+                const manualText = botMappings[rawPostbackId];
+                matchedBtn = allPostbacks.find(p => p.buttonText.trim() === manualText.trim() && p.sourceNodeName === currentQuestion);
+                if (matchedBtn) {
+                    console.log(`✅ Static Mapping: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
+                }
+            }
+
+            // 2. CHECK GLOBALLY LEARNED MAPPINGS
+            if (!matchedBtn) {
+                const learned = bot.learnedPostbacks.find(l => l.runtimePostbackId === rawPostbackId);
+                if (learned) {
+                    matchedBtn = allPostbacks.find(p => p.buttonText === learned.buttonText);
+                    if (matchedBtn) {
+                        console.log(`✅ Learned Mapping: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
+                    }
+                }
+            }
+
+            // 3. CHECK USER_MESSAGE (IF AVAILABLE)
+            if (!matchedBtn && userMessage && currentQuestion) {
                 const candidates = allPostbacks.filter(p => p.sourceNodeName === currentQuestion);
                 const matchByText = candidates.find(p => 
                     p.buttonText.trim().toLowerCase() === userMessage.trim().toLowerCase() ||
                     userMessage.trim().toLowerCase().includes(p.buttonText.trim().toLowerCase())
                 );
-                
                 if (matchByText) {
-                    learned = {
-                        runtimePostbackId: rawPostbackId,
-                        buttonText: matchByText.buttonText,
-                        sourceNodeName: currentQuestion
-                    };
-                    // Save this new learning globally immediately!
-                    await Bot.updateOne({ apiKey }, { $push: { learnedPostbacks: learned } });
-                    console.log(`💡 Learned NEW ID via userMessage: "${rawPostbackId}" → "${matchByText.buttonText}"`);
+                    matchedBtn = matchByText;
+                    console.log(`💡 Text Match: ${rawPostbackId} -> ${matchedBtn.buttonText}`);
                 }
             }
 
-            if (learned) {
-                answersToSave[learned.sourceNodeName] = learned.buttonText;
-                const botButton = allPostbacks.find(p => p.sourceNodeName === learned.sourceNodeName && p.buttonText === learned.buttonText);
-                sessionDoc.lastQuestion = (botButton && botButton.nextQuestion) ? botButton.nextQuestion : learned.sourceNodeName;
-                sessionDoc.pendingRuntimePostbackId = ''; 
+            // Final Update for Current Step
+            if (matchedBtn) {
+                answersToSave[currentQuestion] = matchedBtn.buttonText;
+                sessionDoc.lastQuestion = matchedBtn.nextQuestion;
+                sessionDoc.pendingRuntimePostbackId = null;
+
+                // Save learning
+                if (!bot.learnedPostbacks.find(l => l.runtimePostbackId === rawPostbackId)) {
+                    bot.learnedPostbacks.push({
+                        runtimePostbackId: rawPostbackId,
+                        buttonText: matchedBtn.buttonText,
+                        sourceNodeName: currentQuestion
+                    });
+                    await bot.save();
+                }
             } else {
+                // DO NOT GUESS. Keep placeholder.
                 if (currentQuestion) {
                     answersToSave[currentQuestion] = `[Postback: ${rawPostbackId}]`;
                     sessionDoc.lastQuestion = currentQuestion;
                     sessionDoc.pendingRuntimePostbackId = rawPostbackId;
+                    console.log(`⏳ Pending: ${rawPostbackId} at ${currentQuestion}`);
                 }
             }
         } else if (userMessage && !isTriggerKeyword) {
+            // Standard Text Input
             if (currentQuestion) {
                 answersToSave[currentQuestion] = userMessage;
+                // Move to next if it's a linear text message question
                 const branches = allPostbacks.filter(p => p.sourceNodeName === currentQuestion);
-                if (branches[0] && branches[0].nextQuestion) sessionDoc.lastQuestion = branches[0].nextQuestion;
+                if (branches[0] && branches[0].nextQuestion) {
+                    sessionDoc.lastQuestion = branches[0].nextQuestion;
+                }
             } else {
                 answersToSave['User Message'] = userMessage;
             }
@@ -170,6 +213,7 @@ exports.receiveWebhook = async (req, res) => {
         });
         sessionDoc.answers = currentAnswers;
         sessionDoc.webhookHistory.push({ payload: data, receivedAt: new Date() });
+        sessionDoc.markModified('answers');
 
         await sessionDoc.save();
         const setQuery = {};
