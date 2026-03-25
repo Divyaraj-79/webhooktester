@@ -457,3 +457,18 @@ exports.getStructured = async (req, res) => {
         res.status(500).json({ error: "Fetch failed" });
     }
 };
+
+exports.deleteEntry = async (req, res) => {
+    try {
+        const { entryId } = req.params;
+        const userId = req.user.id;
+
+        const entry = await ChatData.findOneAndDelete({ _id: entryId, owner: userId });
+        if (!entry) return res.status(404).json({ error: "Entry not found or unauthorized" });
+        
+        res.json({ message: "Entry deleted successfully" });
+    } catch (err) {
+        console.error("❌ deleteEntry error:", err);
+        res.status(500).json({ error: "Failed to delete entry" });
+    }
+};

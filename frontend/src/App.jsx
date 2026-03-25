@@ -230,6 +230,21 @@ function App() {
     }
   };
 
+  const handleDeleteEntry = async (entryId) => {
+    if (!window.confirm('Are you sure you want to delete this entry?')) return;
+    try {
+      setLoading(true);
+      await axios.delete(`${API_BASE}/webhook/entry/${entryId}`, authHeader);
+      setEntries(prev => prev.filter(e => e.id !== entryId));
+      setStatus('Entry deleted');
+      setTimeout(() => setStatus(''), 2000);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to delete entry');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (!user) {
     return (
       <div className="container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '80vh' }}>
@@ -444,6 +459,7 @@ function App() {
                           <th>Name</th>
                           <th>Phone</th>
                           {fields.map(f => <th key={f}>{f}</th>)}
+                          <th style={{ width: '50px' }}></th>
                         </tr>
                       </thead>
                       <tbody>
@@ -455,6 +471,27 @@ function App() {
                             <td style={{ fontWeight: 600 }}>{entry.name}</td>
                             <td style={{ color: 'var(--primary)' }}>{entry.phone}</td>
                             {fields.map(f => <td key={f}>{entry[f]}</td>)}
+                            <td>
+                              <button 
+                                onClick={() => handleDeleteEntry(entry.id)}
+                                style={{ 
+                                  background: 'none', 
+                                  border: 'none', 
+                                  color: 'rgba(255, 255, 255, 0.3)', 
+                                  cursor: 'pointer',
+                                  padding: '4px',
+                                  borderRadius: '4px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.color = '#ff4d4d'}
+                                onMouseOut={(e) => e.currentTarget.style.color = 'rgba(255, 255, 255, 0.3)'}
+                                title="Delete Entry"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
